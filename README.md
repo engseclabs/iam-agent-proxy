@@ -111,11 +111,17 @@ ELHAZ_CONFIG_NAME=my-agent-role docker compose up -d
 
 ```bash
 bash setup_venv.sh
-PROXY_SOCK_PATH=/tmp/proxy/creds.sock ELHAZ_CONFIG_NAME=sandbox-elhaz bash start_proxy.sh  # separate terminal
-PROXY_SOCK_PATH=/tmp/proxy/creds.sock bash test_resign.sh
-```
 
-> `PROXY_SOCK_PATH` must be overridden locally because `/run/proxy/` requires root on macOS.
+# Terminal 1 — start the proxy (override PROXY_SOCK_PATH; /run/proxy/ requires root on macOS)
+PROXY_SOCK_PATH=/tmp/proxy/creds.sock ELHAZ_CONFIG_NAME=sandbox-elhaz bash start_proxy.sh
+
+# Terminal 2 — set up the local environment and run the test
+source dev_setup.sh          # sets AWS_ACCESS_KEY_ID, HTTPS_PROXY, AWS_CA_BUNDLE
+bash test_resign.sh
+
+# Or exec a single command directly
+bash dev_setup.sh aws sts get-caller-identity
+```
 
 ## Files
 
@@ -128,5 +134,6 @@ PROXY_SOCK_PATH=/tmp/proxy/creds.sock bash test_resign.sh
 | `docker-compose.yml` | Wires proxy and agent together with correct volume mounts and network isolation |
 | `setup_venv.sh` | Creates a local `venv/` for running without Docker |
 | `start_proxy.sh` | Starts `mitmdump` locally on port 8080 |
-| `test_resign.sh` | Calls `aws sts get-caller-identity` through the proxy (works in both Docker and local mode) |
+| `dev_setup.sh` | Fetches a proxy keypair from `creds.sock` and exports `AWS_*` / `HTTPS_PROXY` env vars for local use; sourceable or pass a command to exec |
+| `test_resign.sh` | Calls `aws sts get-caller-identity` and checks the ARN; assumes env is already configured (via `dev_setup.sh` locally or pre-set in Docker) |
 | `DESIGN.md` | Full architecture and design rationale |
