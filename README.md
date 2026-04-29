@@ -1,33 +1,29 @@
 # aws-sigv4-resigning-proxy
 
-A [mitmproxy](https://mitmproxy.org/) addon that strips and re-signs AWS SigV4 requests on the fly, using credentials vended by [elhaz](https://github.com/61418/elhaz).
-
-The proxy sits between an untrusted agent and AWS. The agent holds a dummy IAM user credential that authenticates it to the proxy. The proxy holds real IAC credentials, validates the inbound signature locally, strips it, and re-signs outbound requests with IAC credentials the agent never sees.
+A [mitmproxy](https://mitmproxy.org/) addon that sits between an untrusted agent and AWS. The agent holds a proxy-issued keypair that has no IAM identity. The proxy validates the inbound SigV4 signature locally, strips it, and re-signs outbound requests with real IAC credentials the agent never sees.
 
 ## Why this exists: IAM Identity Center roles are unmodifiable
 
-AWS IAM Identity Center roles live under `/aws-reserved/` and return `UnmodifiableEntity` on any attempt to modify their trust policy. The trust policy allows only `sts:AssumeRoleWithSAML` from the SAML provider — self-assumption is blocked. This means an agent cannot directly assume an IAC role, and session policies (which require an `AssumeRole` call that the trust policy must permit) are also unreachable.
+AWS IAM Identity Center roles live under `/aws-reserved/` and return `UnmodifiableEntity` on any attempt to modify their trust policy. The trust policy allows only `sts:AssumeRoleWithSAML` from the SAML provider — self-assumption is blocked. Session policies (which require an `AssumeRole` call the trust policy must permit) are also unreachable.
 
-The proxy is the solution: it holds an elhaz session for the IAC role and re-signs outbound requests. The agent authenticates to the proxy, not to AWS directly.
+The proxy is the workaround: it holds an [elhaz](https://github.com/61418/elhaz) session for the IAC role and re-signs outbound requests. The agent authenticates to the proxy, not to AWS directly.
 
-## Dummy IAM user as credential carrier
+## How it works
 
-The agent is given access keys for an IAM user with no attached policies. These keys authenticate the agent to the proxy via SigV4 but cannot call any AWS API directly.
+**Credential carrier** — at startup, the proxy generates fake-but-syntactically-valid AWS keypairs and vends them to agent clients over a Unix socket (`creds.sock`). There is no IAM identity behind these keys. The agent's AWS SDK uses them to sign requests; the proxy validates the signature and re-signs with real credentials. If the keypair leaks, it is useless to AWS.
 
-This is intentional. If the keys appear in a prompt, a log, or an exfiltrated file, they are useless outside the proxy. Credential leakage from the agent only compromises its identity to the proxy, not its access to AWS.
+Each socket connection gets its own distinct keypair, so the proxy can tell clients apart by their `access_key_id`.
 
-## Docker isolation as the enforcement boundary
+**Local SigV4 validation** — the proxy recomputes the HMAC-SHA256 signature from the inbound request and compares it against the `Authorization` header. Requests signed with unknown or mismatched keys are rejected with a forged `InvalidClientTokenId` 403 before any IAC credential fetch occurs.
 
-Run the proxy on the host (or in a privileged sidecar). The agent runs in a container with no host network access, no elhaz socket mount, and no IAM instance profile reachable from inside the container. The proxy is the agent's only path to AWS — isolation is a property of the environment, not a property of the agent.
+**Docker isolation** — the agent container gets only `creds.sock` and the mitmproxy port. No elhaz socket, no IAM instance profile, no host network access. The proxy is the agent's only path to AWS. Isolation is a property of the environment, not a property of the agent.
 
-## Recording and enforcement modes
+**Recording and enforcement modes** *(planned)*
 
-The proxy supports two operating modes:
+- **Recording mode**: forward all validated requests, log every AWS API call (service, action, resource ARN).
+- **Enforcement mode**: check each request against an allowlist derived from a prior recording. Block everything else with a forged `AccessDenied` 403 that AWS SDKs handle on their normal error path.
 
-- **Recording mode**: forward all requests, log every AWS API call (service, action, resource ARN, params). Use this to observe what the agent actually does.
-- **Enforcement mode**: only forward requests that match the recorded allowlist. Block everything else with a forged `AccessDenied` response that AWS SDKs handle gracefully. Optionally pause on unknown requests for human approval.
-
-This inverts the traditional least-privilege problem: instead of authoring a policy before the agent runs, you observe real behavior and derive the allowlist from it. See [DESIGN.md](DESIGN.md) for the full architecture.
+This inverts the least-privilege problem: observe real behavior first, then derive the allowlist from it. See [DESIGN.md](DESIGN.md) for the full architecture.
 
 ## Prerequisites
 
@@ -41,21 +37,58 @@ This inverts the traditional least-privilege problem: instead of authoring a pol
 # 1. Create the virtualenv
 bash setup_venv.sh
 
-# 2. Start the proxy (separate terminal)
+# 2. Start the proxy (in a separate terminal)
+#    Creates /run/proxy/creds.sock and starts listening on port 8080
 ELHAZ_CONFIG_NAME=my-agent-role bash start_proxy.sh
 
 # 3. Run the test
+#    Fetches a proxy-issued keypair from creds.sock, signs a request with it,
+#    and verifies the proxy re-signs and forwards it correctly
 bash test_resign.sh
 ```
 
 The test calls `aws sts get-caller-identity` through the proxy. The returned ARN should be the elhaz role, not whatever identity is in your shell environment.
 
+## Agent setup
+
+The agent container fetches its keypair via the `credential_process` mechanism — no custom SDK code required.
+
+Install `proxy-creds` in the container:
+
+```bash
+cp proxy-creds /usr/local/bin/proxy-creds
+chmod +x /usr/local/bin/proxy-creds
+```
+
+Add to `~/.aws/config` in the container:
+
+```ini
+[profile proxy]
+credential_process = /usr/local/bin/proxy-creds
+```
+
+Mount only `creds.sock` into the container (not the elhaz socket or any IAC credentials):
+
+```
+/run/proxy/creds.sock  →  mounted into agent container
+/run/proxy/mitm.sock   →  proxy side only
+```
+
+## Configuration
+
+| Env var | Default | Description |
+|---|---|---|
+| `ELHAZ_CONFIG_NAME` | `sandbox-elhaz` | elhaz config name for the IAC role |
+| `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
+| `PROXY_KEYPAIR_TTL` | `3600` | Keypair lifetime in seconds |
+
 ## Files
 
 | File | What it does |
 |---|---|
-| `elhaz_resign.py` | mitmproxy addon — strips inbound SigV4 headers and re-signs using elhaz credentials |
-| `setup_venv.sh` | Creates a `.venv` with mitmproxy and botocore |
+| `elhaz_resign.py` | mitmproxy addon — issues per-client keypairs, validates inbound SigV4, re-signs with elhaz credentials |
+| `proxy-creds` | `credential_process` helper — connects to `creds.sock` and prints the keypair JSON the AWS SDK expects |
+| `setup_venv.sh` | Creates a `venv/` with mitmproxy and botocore |
 | `start_proxy.sh` | Starts `mitmdump` on port 8080 with the addon loaded |
-| `test_resign.sh` | Runs `aws sts get-caller-identity` through the proxy to verify signing works |
+| `test_resign.sh` | Fetches a proxy keypair and calls `aws sts get-caller-identity` through the proxy |
 | `DESIGN.md` | Full architecture and design rationale |
