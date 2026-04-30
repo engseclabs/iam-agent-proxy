@@ -4,6 +4,7 @@ from .credentials import CredentialStore, start_creds_server
 from .elhaz import ElhazCredentialCache
 from .exceptions import ProxyError, UpstreamError, ValidationError, error_status
 from .models import ClientCred, CredentialPayload, ErrorEnvelope
+from .recorder import RequestRecord, RequestRecorder
 from .sigv4 import parse_aws_host, validate_sigv4
 
 __all__ = [
@@ -21,6 +22,9 @@ __all__ = [
     "ClientCred",
     "CredentialPayload",
     "ErrorEnvelope",
+    # recorder
+    "RequestRecord",
+    "RequestRecorder",
     # sigv4
     "parse_aws_host",
     "validate_sigv4",
