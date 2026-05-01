@@ -1,6 +1,6 @@
 """Exception hierarchy for the elhaz-resign proxy."""
 
-__all__ = ["ProxyError", "ValidationError", "UpstreamError", "error_status"]
+__all__ = ["ProxyError", "ValidationError", "UpstreamError", "EnforcementError", "error_status"]
 
 
 class ProxyError(Exception):
@@ -19,9 +19,15 @@ class UpstreamError(ProxyError):
         super().__init__(message, code="ServiceUnavailable")
 
 
+class EnforcementError(ProxyError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="AccessDenied")
+
+
 _ERROR_STATUS: dict[type[ProxyError], int] = {
     ValidationError: 403,
     UpstreamError: 503,
+    EnforcementError: 403,
 }
 
 

@@ -10,15 +10,34 @@ from botocore.auth import S3SigV4Auth, SigV4Auth
 from botocore.awsrequest import AWSRequest
 from mitmproxy import http
 
+from .allowlist import Allowlist
 from .credentials import CredentialStore, start_creds_server
 from .elhaz import ELHAZ_CONFIG, ElhazCredentialCache
-from .exceptions import ProxyError, UpstreamError, ValidationError, error_status
+from .exceptions import EnforcementError, ProxyError, UpstreamError, ValidationError, error_status
 from .models import ErrorEnvelope
+from .resolver import load_resolver
 from .sigv4 import parse_aws_host, validate_sigv4
 
 log = logging.getLogger(__name__)
 
 PROXY_SOCK_PATH = Path(os.environ.get("PROXY_SOCK_PATH", "/run/proxy/creds.sock"))
+
+# PROXY_MODE: "record" (default) or "enforce"
+_PROXY_MODE = os.environ.get("PROXY_MODE", "record").lower()
+# ALLOWLIST_PATH: path to IAM policy JSON used in enforce mode
+_ALLOWLIST_PATH = os.environ.get("ALLOWLIST_PATH", "")
+
+
+def _load_allowlist() -> Allowlist | None:
+    if _PROXY_MODE != "enforce":
+        return None
+    if not _ALLOWLIST_PATH:
+        raise RuntimeError("PROXY_MODE=enforce requires ALLOWLIST_PATH to be set")
+    path = Path(_ALLOWLIST_PATH)
+    if not path.exists():
+        raise RuntimeError(f"ALLOWLIST_PATH {path} does not exist")
+    log.info("Enforcement mode: loading allowlist from %s", path)
+    return Allowlist.from_file(path)
 
 _AUTH_HEADERS = {
     "authorization",
@@ -41,7 +60,10 @@ class ElhazResignAddon:
     def __init__(self) -> None:
         self.store = CredentialStore()
         self.elhaz = ElhazCredentialCache(ELHAZ_CONFIG)
+        self.allowlist: Allowlist | None = _load_allowlist()
+        self.resolver = load_resolver() if _PROXY_MODE == "enforce" else None
         start_creds_server(PROXY_SOCK_PATH, self.store)
+        log.info("Proxy mode: %s", _PROXY_MODE)
 
     def request(self, flow: http.HTTPFlow) -> None:
         parsed = parse_aws_host(flow.request.pretty_host)
@@ -64,6 +86,9 @@ class ElhazResignAddon:
         if not validate_sigv4(flow, self.store):
             raise ValidationError("The security token included in the request is invalid.")
 
+        if self.allowlist is not None and self.resolver is not None:
+            self._enforce(flow, service)
+
         for h in list(flow.request.headers.keys()):
             if h.lower() in _AUTH_HEADERS:
                 del flow.request.headers[h]
@@ -85,6 +110,26 @@ class ElhazResignAddon:
             flow.request.headers[key] = value
 
         log.info("Request re-signed for %s/%s", service, region)
+
+    def _enforce(self, flow: http.HTTPFlow, service: str) -> None:
+        """Resolve the request to IAM actions and block if not in the allowlist."""
+        req = flow.request
+        actions = self.resolver.resolve(  # type: ignore[union-attr]
+            method=req.method,
+            host=req.pretty_host,
+            path=req.path,
+            headers=dict(req.headers),
+            body=req.content or b"",
+            service_slug=service,
+        )
+        log.info("Resolved actions for %s %s: %s", req.method, req.path, actions)
+
+        if not self.allowlist.permits(actions):  # type: ignore[union-attr]
+            denied = actions[0] if actions else f"{service}:Unknown"
+            raise EnforcementError(
+                f"User is not authorized to perform: {denied} "
+                f"(proxy enforcement mode)"
+            )
 
 
 def load(loader) -> None:  # noqa: D103 — mitmproxy hook
