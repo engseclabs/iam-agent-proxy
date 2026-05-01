@@ -20,11 +20,14 @@ log = logging.getLogger(__name__)
 
 PROXY_SOCK_PATH = Path(os.environ.get("PROXY_SOCK_PATH", "/run/proxy/creds.sock"))
 
+# Headers that carry the inbound signature and must be replaced during re-signing.
+# x-amz-content-sha256 is intentionally excluded: it is a payload hash required
+# by S3 that SigV4Auth does not rewrite, so stripping it causes S3 to reject the
+# re-signed request with "Missing required header".
 _AUTH_HEADERS = {
     "authorization",
     "x-amz-date",
     "x-amz-security-token",
-    "x-amz-content-sha256",
 }
 
 
