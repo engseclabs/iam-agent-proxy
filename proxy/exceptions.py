@@ -1,4 +1,4 @@
-"""Exception hierarchy for the elhaz-resign proxy."""
+"""Exception hierarchy for the iam-agent-proxy."""
 
 __all__ = ["ProxyError", "ValidationError", "UpstreamError", "EnforcementError", "error_status"]
 

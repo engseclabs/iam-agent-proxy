@@ -1,8 +1,8 @@
 """
-mitmproxy entry point — loads the elhaz-resign addon from the proxy package.
+mitmproxy entry point — loads the iam-agent-proxy addon from the proxy package.
 
 Usage:
-    mitmdump --listen-port 8080 --scripts elhaz_resign.py
+    mitmdump --listen-port 8080 --scripts iam_agent_proxy.py
 
 Config (env vars):
     ELHAZ_CONFIG_NAME   elhaz config name (default: sandbox-elhaz)

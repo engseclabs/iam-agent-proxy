@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start_proxy.sh — start mitmdump with the elhaz_resign addon on port 8080.
+# start_proxy.sh — start mitmdump with the iam_agent_proxy addon on port 8080.
 #
 # Run this in a separate terminal before running test_resign.sh.
 # The proxy generates ~/.mitmproxy/mitmproxy-ca-cert.pem on first run.
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ADDON="${SCRIPT_DIR}/elhaz_resign.py"
+ADDON="${SCRIPT_DIR}/iam_agent_proxy.py"
 
 if [[ ! -f "${ADDON}" ]]; then
     echo "ERROR: addon not found at ${ADDON}"
@@ -30,7 +30,7 @@ if [[ ! -d "${SOCK_DIR}" ]]; then
     mkdir -p "${SOCK_DIR}"
 fi
 
-echo "Starting mitmproxy with elhaz_resign addon..."
+echo "Starting mitmproxy with iam_agent_proxy addon..."
 echo "  Addon:       ${ADDON}"
 echo "  Port:        8080"
 echo "  Config:      ${ELHAZ_CONFIG_NAME:-sandbox-elhaz}"

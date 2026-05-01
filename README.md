@@ -1,4 +1,4 @@
-# aws-sigv4-resigning-proxy
+# iam-agent-proxy
 
 A **credential injection proxy** for AWS: the agent holds proxy-issued fake AWS keys with no IAM identity, and the proxy re-signs outbound requests with real credentials the agent never sees. Isolation is a property of the environment, not the agent — the agent cannot misuse credentials it does not hold.
 

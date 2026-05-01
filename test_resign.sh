@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_resign.sh — call aws sts get-caller-identity through the elhaz-resign proxy
+# test_resign.sh — call aws sts get-caller-identity through the iam-agent-proxy
 # and verify the returned ARN belongs to the elhaz IAC role.
 #
 # Assumes the environment is already configured:
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-echo "=== elhaz SigV4 re-signing — Phase 1 ==="
+echo "=== iam-agent-proxy — Phase 1 ==="
 echo "AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-<from AWS_PROFILE>}"
 echo "HTTPS_PROXY:       ${HTTPS_PROXY:-<not set>}"
 echo "AWS_CA_BUNDLE:     ${AWS_CA_BUNDLE:-<not set>}"

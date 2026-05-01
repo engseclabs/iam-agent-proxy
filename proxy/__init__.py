@@ -1,4 +1,4 @@
-"""elhaz-resign proxy — public API."""
+"""iam-agent-proxy — public API."""
 
 from .credentials import CredentialStore, start_creds_server
 from .elhaz import ElhazCredentialCache

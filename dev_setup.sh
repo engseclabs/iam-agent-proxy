@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # dev_setup.sh — configure the local environment to send AWS requests through
-# the elhaz-resign proxy.
+# the iam-agent-proxy.
 #
 # Usage (sourceable):
 #   source dev_setup.sh

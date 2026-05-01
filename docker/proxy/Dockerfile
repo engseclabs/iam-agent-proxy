@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir mitmproxy==12.2.2 botocore pydantic && \
 
 WORKDIR /proxy
 
-COPY elhaz_resign.py .
+COPY iam_agent_proxy.py .
 COPY proxy/ proxy/
 COPY docs/map.json docs/map.json
 
@@ -24,5 +24,5 @@ CMD ["sh", "-c", \
   "mkdir -p /run/proxy && \
    mitmdump \
      --listen-port 8080 \
-     --scripts /proxy/elhaz_resign.py \
+     --scripts /proxy/iam_agent_proxy.py \
      --set confdir=/run/mitmproxy"]

@@ -1,4 +1,4 @@
-# Design: aws-sigv4-resigning-proxy
+# Design: iam-agent-proxy
 
 ## Problem statement
 
