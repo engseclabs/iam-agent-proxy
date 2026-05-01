@@ -104,7 +104,7 @@ The proxy operates in two modes.
 
 All validated requests are forwarded to AWS. Recording happens through two complementary mechanisms:
 
-**iamlive CSM sidecar** — [iamlive](https://github.com/iann0036/iamlive) runs alongside mitmproxy in the proxy container in CSM (client-side monitoring) mode. The AWS SDK in the agent container emits UDP telemetry to iamlive on every API call (`AWS_CSM_ENABLED=true`, `AWS_CSM_HOST=proxy`). iamlive uses its own maintained mapping dataset (~19,000 entries) to translate SDK calls to canonical `service:Action` strings, then prints a cumulative IAM policy JSON to stdout (visible via `docker compose logs proxy`) on every API call. The policy JSON can be applied directly with `aws iam put-role-policy`, used as a session policy input, or loaded by a future enforcement layer.
+**iamlive CSM sidecar** — [iamlive](https://github.com/iann0036/iamlive) runs alongside mitmproxy in the proxy container in CSM (client-side monitoring) mode. The AWS SDK in the agent container emits UDP telemetry to iamlive on every API call (`AWS_CSM_ENABLED=true`, `AWS_CSM_HOST=proxy`). iamlive uses its own maintained mapping dataset (~19,000 entries) to translate SDK calls to canonical `service:Action` strings, then prints a cumulative IAM policy JSON to stdout (visible via `docker compose logs proxy`) on every API call. The policy JSON can be applied directly with `aws iam put-role-policy`, used as a session policy input, or used directly as the `ALLOWLIST_PATH` input when switching the proxy to enforcement mode.
 
 **Why iamlive for policy generation rather than in-proxy parsing**
 
@@ -114,10 +114,19 @@ iamlive proxy mode cannot be chained with mitmproxy (it does not support upstrea
 
 ### Enforcement mode
 
-The proxy loads an allowlist derived from a prior recording session (or authored directly). The natural allowlist format is the IAM policy JSON produced by iamlive — standard `{"Version":"2012-10-17","Statement":[...]}` — which means the recording artifact is directly usable as the enforcement input with no translation step. Each inbound request is checked against the allowlist:
+Set `PROXY_MODE=enforce` and `ALLOWLIST_PATH=/path/to/policy.json`. The proxy resolves each validated request to IAM action strings, checks them against the allowlist, and blocks anything not permitted:
 - Match: forward and re-sign.
-- No match: block and return a forged AWS error response (see below).
-- No match, interactive: pause, surface the request to a human for approval, add to allowlist on approval, block on denial.
+- No match: block and return a forged `AccessDenied` 403 (see [Error forgery](#error-forgery-for-blocked-requests)).
+
+The natural allowlist format is the IAM policy JSON produced by iamlive — standard `{"Version":"2012-10-17","Statement":[...]}` — which means the recording artifact is directly usable as the enforcement input with no translation step.
+
+**Action resolution** — the proxy resolves HTTP requests to IAM action strings in-process, without calling iamlive or any external service. `proxy/resolver.py` dispatches on the AWS wire protocol for each service:
+
+- **`json` protocol** (DynamoDB, KMS, Lambda, etc.): reads the operation name from the `X-Amz-Target` header.
+- **`query`/`ec2` protocol** (IAM, STS, EC2, SQS, etc.): reads the `Action` field from the URL-encoded POST body.
+- **`rest-json`/`rest-xml` protocol** (S3, ECS, CloudWatch, etc.): matches the HTTP method and URI path against pre-compiled regex patterns derived from botocore service models. Disambiguation uses literal query string keys (e.g. `?acl`, `?tagging`), required query parameters (e.g. `partNumber` for `UploadPart`), and required headers (e.g. `x-amz-copy-source` for `CopyObject`).
+
+Resolved operation names are looked up in `docs/map.json` (vendored from `iann0036/iam-dataset`, ~19k entries) to produce the canonical IAM action string(s). One SDK operation can require multiple IAM actions (e.g. `S3.CopyObject` requires `s3:GetObject` on the source and `s3:PutObject` on the destination); all must be permitted for the request to proceed.
 
 The "carve as you go" model — recording first, then switching to enforcement — inverts the traditional least-privilege workflow. Instead of authoring a policy before running the agent (which requires predicting what the agent will do), you run the agent in recording mode, observe its real behavior, and derive the policy from that. The resulting allowlist reflects actual usage, not a guess.
 

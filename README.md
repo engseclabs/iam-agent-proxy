@@ -18,7 +18,7 @@ The proxy is the workaround: it holds an [elhaz](https://github.com/61418/elhaz)
 
 **Recording mode** — [iamlive](https://github.com/iann0036/iamlive) runs as a CSM sidecar on the proxy container, receiving SDK telemetry from the agent over UDP and printing a standard IAM policy JSON to stdout — a ready-to-use least-privilege policy derived from what the agent actually called.
 
-**Enforcement mode** *(planned)* — see [DESIGN.md](DESIGN.md).
+**Enforcement mode** — set `PROXY_MODE=enforce` and point `ALLOWLIST_PATH` at an IAM policy JSON file (e.g. one captured in recording mode). The proxy resolves each request to IAM action strings, checks them against the allowlist, and returns a forged `AccessDenied` 403 for anything not permitted. The agent cannot distinguish a proxy-enforced denial from a real IAM denial.
 
 ## Quickstart
 
@@ -101,7 +101,7 @@ After running the agent, inspect the IAM policy iamlive accumulated:
 docker compose logs proxy | grep -A100 '"Version"'
 ```
 
-The policy is printed to stdout on every API call and contains only the actions the agent actually called — usable directly with `aws iam put-role-policy` or as a session policy in a future enforcement phase.
+The policy is printed to stdout on every API call and contains only the actions the agent actually called. It is usable directly with `aws iam put-role-policy`, as a session policy, or as the `ALLOWLIST_PATH` input when switching to enforcement mode.
 
 > **Note on dependencies:** mitmproxy 12.x and elhaz 0.5.x have an irreconcilable `typing-extensions` version conflict. The proxy image resolves this by installing elhaz in a separate venv (`/opt/elhaz-venv`) and symlinking its binary onto `PATH`. They never share a Python environment.
 
@@ -115,6 +115,8 @@ The policy is printed to stdout on every API call and contains only the actions 
 | `ELHAZ_SOCKET_PATH` | `/tmp/elhaz.sock` | Socket path inside the proxy container |
 | `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
 | `PROXY_KEYPAIR_TTL` | `3600` | Proxy keypair lifetime in seconds |
+| `PROXY_MODE` | `record` | `record` (forward all) or `enforce` (check allowlist) |
+| `ALLOWLIST_PATH` | *(required in enforce mode)* | Path to IAM policy JSON allowlist |
 
 Override defaults in `.env` or by prefixing `docker compose up`:
 
@@ -142,7 +144,15 @@ bash dev_setup.sh aws sts get-caller-identity
 
 | File | What it does |
 |---|---|
-| `elhaz_resign.py` | mitmproxy addon — issues per-client keypairs, validates inbound SigV4, re-signs with elhaz credentials |
+| `proxy/addon.py` | mitmproxy entry point — wires together credential validation, enforcement, and re-signing |
+| `proxy/sigv4.py` | AWS hostname parsing and local SigV4 signature validation |
+| `proxy/credentials.py` | Per-client keypair issuance and Unix socket credential server |
+| `proxy/resolver.py` | HTTP request → IAM action resolver (botocore protocol dispatch + `map.json` lookup) |
+| `proxy/allowlist.py` | IAM policy JSON checker used in enforcement mode |
+| `proxy/elhaz.py` | elhaz credential cache — fetches IAC credentials for re-signing |
+| `proxy/exceptions.py` | `ValidationError`, `UpstreamError`, `EnforcementError` and their HTTP status codes |
+| `proxy/models.py` | Pydantic models for credential payloads and forged AWS error responses |
+| `docs/map.json` | Vendored `iann0036/iam-dataset` — SDK method → IAM action mapping (~19k entries) |
 | `proxy-creds` | `credential_process` helper — connects to `creds.sock` and prints the keypair JSON the AWS SDK expects |
 | `docker/proxy/Dockerfile` | Proxy image — mitmproxy + botocore + pydantic; elhaz in isolated venv; iamlive CSM binary |
 | `docker/agent/Dockerfile` | Agent image — AWS CLI + proxy-creds wired up via `credential_process` |
