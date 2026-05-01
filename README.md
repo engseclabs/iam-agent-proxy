@@ -16,7 +16,7 @@ The proxy is the workaround: it holds an [elhaz](https://github.com/61418/elhaz)
 
 **Docker isolation** — the agent container gets only `creds.sock` and the mitmproxy port. No elhaz socket, no IAC credentials, no host network access. The proxy is the agent's only path to AWS. Isolation is a property of the environment, not a property of the agent.
 
-**Recording mode** — [iamlive](https://github.com/iann0036/iamlive) runs as a CSM sidecar on the proxy container, receiving SDK telemetry from the agent over UDP and accumulating a standard IAM policy JSON (`policy.json`) — a ready-to-use least-privilege policy derived from what the agent actually called.
+**Recording mode** — [iamlive](https://github.com/iann0036/iamlive) runs as a CSM sidecar on the proxy container, receiving SDK telemetry from the agent over UDP and printing a standard IAM policy JSON to stdout — a ready-to-use least-privilege policy derived from what the agent actually called.
 
 **Enforcement mode** *(planned)* — see [DESIGN.md](DESIGN.md).
 
@@ -77,10 +77,9 @@ host
 │
 ├── proxy container
 │   ├── mitmdump :8080              — intercepts and re-signs AWS requests
-│   ├── iamlive (CSM, UDP :31000)   — receives SDK telemetry, writes policy.json
+│   ├── iamlive (CSM, UDP :31000)   — receives SDK telemetry, prints policy to stdout
 │   ├── elhaz (in /opt/elhaz-venv)  — fetches IAC credentials via mounted socket
 │   ├── /run/proxy/creds.sock       — vends per-client proxy keypairs (named volume)
-│   ├── /run/proxy/policy.json      — IAM policy accumulated by iamlive (named volume)
 │   └── /run/mitmproxy/             — CA cert (named volume)
 │
 └── agent container
@@ -99,10 +98,10 @@ The agent is on an internal Docker bridge network. Its only internet egress is t
 After running the agent, inspect the IAM policy iamlive accumulated:
 
 ```bash
-docker compose exec proxy cat /run/proxy/policy.json
+docker compose logs proxy | grep -A100 '"Version"'
 ```
 
-The policy is written every 5 seconds and on container exit. It contains only the actions the agent actually called — usable directly with `aws iam put-role-policy` or as a session policy in a future enforcement phase.
+The policy is printed to stdout on every API call and contains only the actions the agent actually called — usable directly with `aws iam put-role-policy` or as a session policy in a future enforcement phase.
 
 > **Note on dependencies:** mitmproxy 12.x and elhaz 0.5.x have an irreconcilable `typing-extensions` version conflict. The proxy image resolves this by installing elhaz in a separate venv (`/opt/elhaz-venv`) and symlinking its binary onto `PATH`. They never share a Python environment.
 
@@ -116,7 +115,6 @@ The policy is written every 5 seconds and on container exit. It contains only th
 | `ELHAZ_SOCKET_PATH` | `/tmp/elhaz.sock` | Socket path inside the proxy container |
 | `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
 | `PROXY_KEYPAIR_TTL` | `3600` | Proxy keypair lifetime in seconds |
-| `IAMLIVE_OUTPUT_FILE` | `/run/proxy/policy.json` | Path iamlive writes the accumulated IAM policy to |
 
 Override defaults in `.env` or by prefixing `docker compose up`:
 
