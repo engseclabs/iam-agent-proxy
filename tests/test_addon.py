@@ -18,7 +18,7 @@ from conftest import FakeElhazCache, make_signed_flow, make_store_with
 # Helpers
 # --------------------------------------------------------------------------- #
 
-_AUTH_HEADER_NAMES = {"authorization", "x-amz-date", "x-amz-security-token"}
+_AUTH_HEADER_NAMES = {"authorization", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256"}
 
 
 def _make_addon(store: CredentialStore | None = None, elhaz=None):
@@ -88,13 +88,11 @@ def test_handle_strips_inbound_auth_headers():
     flow = make_signed_flow()
     old_auth = flow.request.headers.get("authorization")
     flow.request.headers["x-amz-security-token"] = "oldtoken"
-    flow.request.headers["x-amz-content-sha256"] = "payloadhash"
+    flow.request.headers["x-amz-content-sha256"] = "oldhash"
     addon._handle(flow, "s3", "us-east-1")
-    # security token must be stripped (it belongs to the inbound keypair)
     assert "x-amz-security-token" not in flow.request.headers
-    # content-sha256 must be preserved — SigV4Auth does not rewrite it and S3 requires it
-    assert flow.request.headers.get("x-amz-content-sha256") == "payloadhash"
-    # authorization must be present but must be the NEW re-signed value
+    # S3SigV4Auth rewrites x-amz-content-sha256 — the old inbound value must be gone
+    assert flow.request.headers.get("x-amz-content-sha256") != "oldhash"
     assert flow.request.headers.get("authorization") != old_auth
 
 
