@@ -21,21 +21,11 @@ from conftest import FakeElhazCache, make_signed_flow, make_store_with
 _AUTH_HEADER_NAMES = {"authorization", "x-amz-date", "x-amz-security-token", "x-amz-content-sha256"}
 
 
-def _make_noop_recorder():
-    """A RequestRecorder with recording disabled (no file I/O)."""
-    from proxy.recorder import RequestRecorder
-    import tempfile, pathlib
-    rec = RequestRecorder(record_path=pathlib.Path(tempfile.mktemp(suffix=".jsonl")))
-    rec._enabled = False
-    return rec
-
-
-def _make_addon(store: CredentialStore | None = None, elhaz=None, recorder=None):
+def _make_addon(store: CredentialStore | None = None, elhaz=None):
     """Build an ElhazResignAddon without starting the real creds server."""
     addon = object.__new__(ElhazResignAddon)
     addon.store = store or make_store_with()
     addon.elhaz = elhaz or FakeElhazCache()
-    addon.recorder = recorder if recorder is not None else _make_noop_recorder()
     return addon
 
 
@@ -165,46 +155,3 @@ def test_request_successful_resign_leaves_no_response_set():
     flow = make_signed_flow()
     addon.request(flow)
     assert flow.response is None
-
-
-# --------------------------------------------------------------------------- #
-# request — recorder integration
-# --------------------------------------------------------------------------- #
-
-def test_handle_calls_recorder_after_resign(tmp_path):
-    from proxy.recorder import RequestRecorder
-    record_path = tmp_path / "record.jsonl"
-    recorder = RequestRecorder(record_path=record_path)
-    recorder._enabled = True
-    addon = _make_addon(recorder=recorder)
-    flow = make_signed_flow(
-        host="sts.amazonaws.com",
-        service="sts",
-        region="us-east-1",
-        method="POST",
-        path="/",
-        body=b"Action=GetCallerIdentity&Version=2011-06-15",
-    )
-    addon._handle(flow, "sts", "us-east-1")
-    lines = record_path.read_text().strip().splitlines()
-    assert len(lines) == 1
-    import json
-    data = json.loads(lines[0])
-    assert data["service"] == "sts"
-    assert data["region"] == "us-east-1"
-    assert data["action"] == "GetCallerIdentity"
-    assert data["access_key_id"] == "AKIAPROXYTEST12345678"
-
-
-def test_handle_recorder_not_called_on_validation_failure(tmp_path):
-    from proxy.recorder import RequestRecorder
-    import pytest
-    record_path = tmp_path / "record.jsonl"
-    recorder = RequestRecorder(record_path=record_path)
-    recorder._enabled = True
-    store = make_store_with(secret="correct")
-    addon = _make_addon(store=store, recorder=recorder)
-    flow = make_signed_flow(secret="wrong")
-    with pytest.raises(Exception):
-        addon._handle(flow, "s3", "us-east-1")
-    assert not record_path.exists()

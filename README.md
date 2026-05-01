@@ -16,7 +16,7 @@ The proxy is the workaround: it holds an [elhaz](https://github.com/61418/elhaz)
 
 **Docker isolation** — the agent container gets only `creds.sock` and the mitmproxy port. No elhaz socket, no IAC credentials, no host network access. The proxy is the agent's only path to AWS. Isolation is a property of the environment, not a property of the agent.
 
-**Recording mode** — every validated, re-signed request is logged to a JSONL file (`proxy-record.jsonl`) on the proxy side. Simultaneously, [iamlive](https://github.com/iann0036/iamlive) runs as a CSM sidecar on the proxy container, receiving SDK telemetry from the agent over UDP and accumulating a standard IAM policy JSON (`policy.json`) — a ready-to-use least-privilege policy derived from what the agent actually called.
+**Recording mode** — [iamlive](https://github.com/iann0036/iamlive) runs as a CSM sidecar on the proxy container, receiving SDK telemetry from the agent over UDP and accumulating a standard IAM policy JSON (`policy.json`) — a ready-to-use least-privilege policy derived from what the agent actually called.
 
 **Enforcement mode** *(planned)* — see [DESIGN.md](DESIGN.md).
 

@@ -104,11 +104,7 @@ The proxy operates in two modes.
 
 All validated requests are forwarded to AWS. Recording happens through two complementary mechanisms:
 
-**Proxy-side JSONL log** — `proxy/recorder.py` appends a structured record for every request that passes SigV4 validation and is successfully re-signed. Each record captures timestamp, `access_key_id`, service, region, HTTP method, URL, and a best-effort action and resource derived from the request. The log path is controlled by `PROXY_RECORD_PATH` (default `./proxy-record.jsonl`). This log is authoritative: it contains every request the proxy forwarded, including any that did not come from the AWS SDK.
-
-**iamlive CSM sidecar** — [iamlive](https://github.com/iann0036/iamlive) runs alongside mitmproxy in the proxy container in CSM (client-side monitoring) mode. The AWS SDK in the agent container emits UDP telemetry to iamlive on every API call (`AWS_CSM_ENABLED=true`, `AWS_CSM_HOST=proxy`). iamlive uses its own maintained mapping dataset to translate SDK calls to canonical `service:Action` strings, then accumulates a standard IAM policy JSON written to `IAMLIVE_OUTPUT_FILE` (default `/run/proxy/policy.json`) every few seconds and on exit.
-
-The two outputs are complementary: the JSONL log is per-request and carries full request context; the policy JSON is the distilled least-privilege policy ready for use. The policy JSON can be applied directly with `aws iam put-role-policy`, used as a session policy input, or loaded by a future enforcement layer.
+**iamlive CSM sidecar** — [iamlive](https://github.com/iann0036/iamlive) runs alongside mitmproxy in the proxy container in CSM (client-side monitoring) mode. The AWS SDK in the agent container emits UDP telemetry to iamlive on every API call (`AWS_CSM_ENABLED=true`, `AWS_CSM_HOST=proxy`). iamlive uses its own maintained mapping dataset (~19,000 entries) to translate SDK calls to canonical `service:Action` strings, then accumulates a standard IAM policy JSON written to `IAMLIVE_OUTPUT_FILE` (default `/run/proxy/policy.json`) every few seconds and on exit. The policy JSON can be applied directly with `aws iam put-role-policy`, used as a session policy input, or loaded by a future enforcement layer.
 
 **Why iamlive for policy generation rather than in-proxy parsing**
 
