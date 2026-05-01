@@ -1,6 +1,6 @@
 # aws-sigv4-resigning-proxy
 
-A [mitmproxy](https://mitmproxy.org/) addon that sits between an untrusted agent and AWS. The agent holds a proxy-issued keypair with no IAM identity. The proxy validates the inbound SigV4 signature locally, strips it, and re-signs outbound requests with real IAC credentials the agent never sees.
+A [mitmproxy](https://mitmproxy.org/) addon that sits between an untrusted agent and AWS. It does two things: it keeps real IAC credentials out of the agent by intercepting and re-signing every AWS request, and it resolves each request to its actual IAM action so you can observe exactly what permissions the agent needs and enforce only those.
 
 ## Why this exists: IAM Identity Center roles are unmodifiable
 
@@ -40,21 +40,37 @@ Open two terminal panes. In the first, start the proxy and tail its action strea
 ELHAZ_CONFIG_NAME=sandbox-elhaz docker compose up --build proxy
 ```
 
-You'll see mitmproxy start and a line like `Action log: /run/proxy/actions.log`. Keep this pane visible — resolved IAM actions will print here as they're observed.
+You'll see mitmproxy start and log lines as requests come in. Keep this pane visible — resolved IAM actions are logged here and written to `/run/proxy/actions.log` inside the container.
 
-### Step 2 — drop into the agent shell
+### Step 2 — run an integration test (one-liner)
 
-In the second pane, start the agent container and open an interactive shell:
+To verify the stack is working end-to-end, run a command directly in a throwaway agent container:
 
 ```bash
-ELHAZ_CONFIG_NAME=sandbox-elhaz docker compose run --rm agent
+docker compose run --rm agent aws sts get-caller-identity
 ```
 
-The agent container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configured. The proxy holds the real IAC credentials; the agent never sees them.
+Expected output:
 
-### Step 3 — run AWS commands and watch the policy build
+```json
+{
+    "UserId": "AROAEXAMPLE:boto3-refresh-session",
+    "Account": "123456789012",
+    "Arn": "arn:aws:sts::123456789012:assumed-role/YourRole/boto3-refresh-session"
+}
+```
 
-From inside the agent shell, run any AWS commands:
+If you see this, credentials are flowing: proxy keypair → local SigV4 validation → elhaz re-sign → AWS. A `ServiceUnavailable` response means the proxy can't reach the elhaz daemon (check `elhaz daemon status` and that the session is listed in `elhaz daemon list`).
+
+### Step 3 — drop into an interactive agent shell
+
+For longer sessions, open an interactive shell in the agent container:
+
+```bash
+docker compose run --rm agent bash
+```
+
+The container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configured. Run any AWS commands and watch the proxy pane:
 
 ```bash
 aws sts get-caller-identity
