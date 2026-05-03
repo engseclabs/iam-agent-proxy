@@ -1,105 +1,72 @@
-# iam-agent-proxy
+# IAM Agent Proxy
 
-A **credential injection proxy** for AWS: the agent holds proxy-issued fake AWS keys with no IAM identity, and the proxy re-signs outbound requests with real credentials the agent never sees. Isolation is a property of the environment, not the agent — the agent cannot misuse credentials it does not hold.
+A **credential injection proxy** and **least privilege guardrail** for AWS. 
 
-This uses [mitmproxy](https://mitmproxy.org/) under the hood, with [elhaz](https://github.com/61418/elhaz) as the IAM Identity Center credential source. See the [blog post](./BLOG.md) for the conceptual background on credential injection proxies as a pattern.
-
-## Why this exists
-
-**Credential protection and prompt injection resistance** — an AI agent that holds real AWS credentials can be manipulated into leaking them or using them in unintended ways. Prompt injection is a real attack: if the agent reads attacker-controlled content (a document, a web page, a database row), that content can instruct the agent to exfiltrate its credentials or call arbitrary AWS APIs. The proxy eliminates this risk by ensuring the agent never holds credentials at all. It gets a proxy-issued keypair that has no IAM identity and is useless outside the proxy. Even a fully compromised agent cannot leak credentials it was never given.
-
-**Least-privilege policy generation** — the hardest part of scoping an agent's IAM permissions is knowing what it actually needs. Guessing produces overly broad policies; auditing code is error-prone and misses runtime behavior. The proxy resolves every outbound AWS request to its exact IAM action(s) and logs them. Run the agent against a representative workload and you get a precise, observed permission set — not an estimate.
-
-**IAM Identity Center roles are unmodifiable** — for teams using AWS IAM Identity Center, there is an additional constraint: IAC roles live under `/aws-reserved/` and return `UnmodifiableEntity` on any attempt to modify their trust policy. Session policies are also unreachable because the trust policy only permits `sts:AssumeRoleWithSAML`. The proxy is the workaround: it holds an [elhaz](https://github.com/61418/elhaz) session for the IAC role and re-signs outbound requests, so the agent authenticates to the proxy rather than directly to AWS.
-
-## How it works
-
-There are two things going on inside the proxy: it vends fake credentials to the agent, and it rewrites outbound requests to use real ones. Here they are separately, then together.
+run  `docker compose up proxy` and `docker compose up agent` to test.
 
 
+## Credential injection proxy
 
-### 1. Request interception and re-signing
+The sandboxed agent holds proxy-issued fake AWS keys with no IAM identity, and the proxy re-signs outbound requests with real credentials the agent never sees. Isolation is a property of the environment, not the agent — the agent can only exfiltrate proxy credentials.
 
-When the agent makes an AWS API call, the request goes through `mitmdump` (HTTPS proxy on port 8080). mitmdump validates the SigV4 signature locally using the secret it issued, then strips that signature and re-signs the request with real credentials fetched from elhaz.
 
 ```mermaid
 graph LR
-    agent["Agent<br/>(signs with fake key)"]
-    mitm["mitmdump :8080<br/>(validate → re-sign)"]
-    elhaz["elhaz daemon<br/>(real IAC credentials)"]
-    aws["AWS APIs"]
+    
+    agent["**Agent**
+        Signs with fake creds"]
+    proxy["**Proxy**
+        Validates fake creds, signs with real creds"]
+    elhaz["**Elhaz**
+        Daemon with real creds"]
+    aws["**AWS APIs**"]
 
-    agent -- "1. HTTPS request<br/>(fake SigV4)" --> mitm
-    mitm -- "2. fetch real creds" --> elhaz
-    elhaz -- "3. session creds" --> mitm
-    mitm -- "4. re-signed request<br/>(real SigV4)" --> aws
+    agent -- "Fake SigV4" --> proxy
+    proxy -- "Socket IPC" --> elhaz
+    elhaz -- "Real creds" --> proxy
+    proxy -- "Real SigV4" --> aws
 
-    style agent fill:#dcfce7,stroke:#22c55e
-    style mitm fill:#dbeafe,stroke:#3b82f6
-    style elhaz fill:#f5f5f5,stroke:#999
-    style aws fill:#fef3c7,stroke:#d97706
+    classDef agentStyle fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef proxyStyle fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef elhazStyle fill:#f5f5f5,stroke:#737373,color:#262626
+    classDef awsStyle fill:#fef3c7,stroke:#d97706,color:#78350f
+
+    class agent agentStyle
+    class proxy proxyStyle
+    class elhaz elhazStyle
+    class aws awsStyle
 ```
 
-If the inbound signature doesn't validate (unknown access key, mismatched HMAC), mitmdump returns a forged `InvalidClientTokenId` 403 without ever calling elhaz. In enforce mode, it also resolves the request to its IAM action and returns a forged `AccessDenied` 403 if the action isn't on the allowlist.
+## Least privilege guardrail
 
-### 2. Credential replacement
-
-The agent never sees real AWS credentials. The proxy generates fake-but-syntactically-valid keypairs and hands them out over a Unix socket. The agent's SDK signs requests with these fake keys, exactly as it would with real ones.
+The hardest part of locking down an agent's IAM permissions is knowing what it actually needs. Guessing produces overly broad policies; auditing code is error-prone and misses runtime behavior. The proxy resolves every outbound AWS request to its exact IAM action(s) and logs them. Run the agent against a representative workload and you get a precise, observed permission set — not an estimate. Build and apply generated policies to lock-in behavior.
 
 ```mermaid
 graph LR
-    agent["Agent<br/>(AWS SDK)"]
-    helper["proxy-creds<br/>(credential_process)"]
-    vendor["creds.sock<br/>(keypair vendor)"]
+    agent["**Agent**
+        Makes AWS API calls"]
+    proxy["**Proxy**
+        Records AWS API calls to generate IAM policy"]
+    policy["**Policy**
+        Recorded/observed AWS IAM policy"]
+    aws["**AWS APIs**"]
 
-    agent -- "1. needs credentials" --> helper
-    helper -- "2. requests keypair" --> vendor
-    vendor -- "3. fake AKID + secret" --> helper
-    helper -- "4. returns to SDK" --> agent
+    agent -- "Request" --> proxy
+    proxy -- "Response" --> agent
+    proxy -- "Check" --> policy
+    policy -- "Deny" --> proxy
+    proxy -- "Allowed call" --> aws
 
-    style agent fill:#dcfce7,stroke:#22c55e
-    style vendor fill:#dbeafe,stroke:#3b82f6
+    classDef agentStyle fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef proxyStyle fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef policyStyle fill:#f5f5f5,stroke:#737373,color:#262626
+    classDef awsStyle fill:#fef3c7,stroke:#d97706,color:#78350f
+
+    class agent agentStyle
+    class proxy proxyStyle
+    class policy policyStyle
+    class aws awsStyle
 ```
-
-The fake keypair has no IAM identity behind it. AWS would reject it. It only works because the proxy is going to swap it out before the request leaves.
-
-
-### 3. Putting it together
-
-Both flows live in the same proxy container, on a Docker bridge network the agent shares but cannot escape. The agent's only path to AWS is through mitmdump.
-
-```mermaid
-graph TB
-    subgraph host["Host"]
-        elhaz["elhaz daemon"]
-    end
-
-    subgraph net["Docker bridge network"]
-        subgraph proxy["Proxy container"]
-            vendor["creds.sock<br/>(vends fake keypairs)"]
-            mitm["mitmdump :8080<br/>(validates + re-signs)"]
-        end
-
-        subgraph agentbox["Agent container"]
-            agent["AWS SDK / CLI"]
-        end
-    end
-
-    aws["AWS APIs"]
-
-    agent -- "fetch fake creds" --> vendor
-    agent -- "HTTPS (fake SigV4)" --> mitm
-    mitm -- "fetch real creds" --> elhaz
-    mitm -- "re-signed request" --> aws
-
-    style host fill:#f5f5f5,stroke:#999
-    style proxy fill:#dbeafe,stroke:#3b82f6
-    style agentbox fill:#dcfce7,stroke:#22c55e
-    style net fill:#fefce8,stroke:#eab308
-    style aws fill:#fef3c7,stroke:#d97706
-```
-
-The agent container has no access to the elhaz socket and no IAC credentials of its own. It only sees `creds.sock` (fake keypairs) and the mitmdump port. Real credentials never cross the container boundary.
 
 ## Quickstart
 
@@ -110,7 +77,7 @@ The agent container has no access to the elhaz socket and no IAC credentials of 
 
 ```bash
 elhaz daemon start
-elhaz daemon add -n sandbox-elhaz   # or whatever IAC role the agent should use
+elhaz daemon add -n sandbox-elhaz   # or whatever elahz config the agent should use
 ```
 
 ### Step 1 — start the stack
@@ -121,7 +88,7 @@ Open two terminal panes. In the first, start the proxy and tail its action strea
 ELHAZ_CONFIG_NAME=sandbox-elhaz docker compose up --build proxy
 ```
 
-You'll see mitmproxy start and log lines as requests come in. Keep this pane visible — resolved IAM actions are logged here and written to `/run/proxy/actions.log` inside the container.
+You'll see the proxy start and log lines as requests come in. Keep this pane visible — resolved IAM actions are logged here and written to `/run/proxy/actions.log` inside the container.
 
 ### Step 2 — run an integration test (one-liner)
 
@@ -227,8 +194,6 @@ host
 
 The agent is on an internal Docker bridge network. Its only internet egress is through the proxy container.
 
-> **Note on dependencies:** mitmproxy 12.x and elhaz 0.5.x have an irreconcilable `typing-extensions` version conflict. The proxy image resolves this by installing elhaz in a separate venv (`/opt/elhaz-venv`) and symlinking its binary onto `PATH`. They never share a Python environment.
-
 ## Configuration
 
 | Env var | Default | Description |
@@ -247,20 +212,6 @@ Override defaults in `.env` or by prefixing `docker compose up`:
 ```bash
 ELHAZ_CONFIG_NAME=my-agent-role docker compose up -d
 ```
-
-## Switching to enforcement mode
-
-After running the agent in recording mode, collect the observed actions and author an allowlist:
-
-```bash
-# Pull resolved actions from proxy logs
-docker compose logs proxy | grep "Resolved actions" > actions.txt
-
-# Author a policy.json from the observed actions, then:
-PROXY_MODE=enforce ALLOWLIST_PATH=/path/to/policy.json docker compose up -d
-```
-
-The `ALLOWLIST_PATH` file is standard IAM policy JSON — the same format you'd pass to `aws iam put-role-policy`. Enforcement mode is still evolving; see [DESIGN.md](./DESIGN.md) for the full rationale.
 
 ## Appendix: why IAM Identity Center roles require a proxy
 
