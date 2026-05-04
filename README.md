@@ -73,12 +73,15 @@ graph LR
 ### Install
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ### Step 1 — start the proxy
 
 ```bash
+source venv/bin/activate
 python iam_agent_proxy.py
 ```
 
@@ -139,7 +142,7 @@ Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is runn
 
 ~/.aws/config
   [profile iam-agent-proxy]
-  credential_process = python /path/to/proxy_creds.py   # written on startup, removed on clean exit
+  credential_process = /path/to/venv/bin/python /path/to/proxy_creds.py   # written on startup, removed on clean exit
   ca_bundle = ~/.iam-agent-proxy/ca.pem
 ```
 

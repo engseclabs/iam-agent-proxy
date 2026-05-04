@@ -88,7 +88,7 @@ def _write_aws_profile() -> None:
     if not cfg.has_section(section):
         cfg.add_section(section)
 
-    cfg.set(section, "credential_process", f"python {_PROXY_CREDS}")
+    cfg.set(section, "credential_process", f"{sys.executable} {_PROXY_CREDS}")
     cfg.set(section, "ca_bundle", str(_CA_CERT))
 
     with open(_AWS_CONFIG, "w") as f:
