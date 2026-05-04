@@ -63,7 +63,7 @@ graph LR
     class aws awsStyle
 ```
 
-## Quickstart (native — no Docker)
+## Quickstart
 
 ### Prerequisites
 
@@ -103,7 +103,7 @@ In a second terminal:
 source dev_setup.sh
 ```
 
-This fetches a proxy-issued keypair, sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `HTTPS_PROXY`, and `HTTP_PROXY`. No `AWS_CA_BUNDLE` needed — the proxy already wrote it to `~/.aws/config`.
+This fetches a proxy-issued keypair and sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `HTTPS_PROXY`, and `HTTP_PROXY`.
 
 ### Step 3 — make AWS calls
 
@@ -144,72 +144,11 @@ Output:
 }
 ```
 
----
-
-## Quickstart (Docker — with elhaz)
-
-The Docker path uses [elhaz](https://github.com/61418/elhaz) as the upstream credential source instead of boto3. This is useful when the real credentials live in an IAM Identity Center role managed by elhaz.
-
-### Prerequisites
-
-- Docker and Docker Compose
-- [elhaz](https://github.com/61418/elhaz) installed, daemon running, and the target role added
-
-```bash
-elhaz daemon start
-elhaz daemon add -n sandbox-elhaz   # or whatever elhaz config the agent should use
-```
-
-### Start the stack
-
-```bash
-ELHAZ_CONFIG_NAME=sandbox-elhaz docker compose up --build proxy
-```
-
-### Run an integration test
-
-```bash
-docker compose run --rm agent aws sts get-caller-identity
-```
-
-Expected output:
-
-```json
-{
-    "UserId": "AROAEXAMPLE:boto3-refresh-session",
-    "Account": "123456789012",
-    "Arn": "arn:aws:sts::123456789012:assumed-role/YourRole/boto3-refresh-session"
-}
-```
-
-### Drop into an interactive agent shell
-
-```bash
-docker compose run --rm agent bash
-```
-
-The container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configured.
-
-### Extract the policy
-
-```bash
-get-policy
-```
-
-### Tear down
-
-```bash
-docker compose down     # stops containers, keeps volumes (CA cert, action log)
-docker compose down -v  # stops containers and removes volumes
-```
-
----
-
-## How the native path works
+## How it works
 
 ```
 ~/.iam-agent-proxy/
-  ca.pem     # CA cert generated on first run; trusted by the system/AWS SDK via ~/.aws/config
+  ca.pem     # CA cert generated on first run; trusted by the AWS SDK via ~/.aws/config
   ca.key     # CA private key
 
 ~/.aws/config
@@ -219,43 +158,17 @@ docker compose down -v  # stops containers and removes volumes
 
 The proxy runs as a single Python process — no separate venvs, no subprocess dependencies. `proxy.py` handles TLS interception using the generated CA; `boto3` supplies real credentials via the standard credential provider chain.
 
-## How the Docker path works
-
-```
-host
-├── elhaz daemon  ←─── ~/.elhaz/sock/daemon.sock (bind-mounted into proxy)
-│
-├── proxy container
-│   ├── proxy.py :8080          — intercepts, validates SigV4, resolves IAM actions, re-signs
-│   ├── elhaz (in /opt/elhaz-venv) — fetches IAC credentials via mounted socket
-│   ├── /run/proxy/creds.sock   — vends per-client proxy keypairs (named volume)
-│   └── /run/proxy/ca/          — CA cert (named volume)
-│
-└── agent container
-    ├── AWS SDK / CLI           — signs requests with proxy keypair
-    ├── proxy-creds             — credential_process helper reads creds.sock
-    ├── HTTPS_PROXY=proxy:8080  — routes all AWS traffic through proxy
-    └── (no elhaz socket, no IAC credentials)
-```
-
-The agent is on an internal Docker bridge network. Its only internet egress is through the proxy container.
-
 ## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
-| `AWS_PROXY_PROFILE` | `iam-agent-proxy` | AWS profile name used to fetch real credentials for re-signing |
+| `AWS_PROXY_PROFILE` | `iam-agent-proxy` | AWS profile used to fetch real credentials for re-signing |
 | `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
 | `PROXY_KEYPAIR_TTL` | `3600` | Proxy keypair lifetime in seconds |
 | `PROXY_MODE` | `record` | `record` (forward all) or `enforce` (check allowlist) |
 | `ALLOWLIST_PATH` | *(required in enforce mode)* | Path to IAM policy JSON allowlist |
 | `ACTION_LOG_PATH` | `/run/proxy/actions.log` | Where resolved actions are written |
 
-**Docker-only env vars** (elhaz credential source):
+## Integration tests (Docker + elhaz)
 
-| Env var | Default | Description |
-|---|---|---|
-| `ELHAZ_CONFIG_NAME` | `sandbox-elhaz` | elhaz config name for the IAC role |
-| `ELHAZ_SOCK` | `~/.elhaz/sock/daemon.sock` | Host path to the elhaz daemon socket |
-| `ELHAZ_CONFIG_DIR` | `~/.elhaz/configs` | Host path to elhaz config files |
-| `ELHAZ_SOCKET_PATH` | `/tmp/elhaz.sock` | Socket path inside the proxy container |
+A Docker-based integration test stack lives in [`tests/integration/`](tests/integration/). It uses [elhaz](https://github.com/61418/elhaz) as the credential source and runs a fully isolated agent/proxy pair. See [`tests/integration/README.md`](tests/integration/README.md) for setup and usage.
