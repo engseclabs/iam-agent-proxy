@@ -18,17 +18,21 @@ This separates two concerns IAM conflates: *who is making this request* (the pro
 
 ### Native path (boto3)
 
-In the native (non-Docker) path, `core/upstream_creds.py` fetches real credentials via the standard boto3 credential provider chain:
+In the native (non-Docker) path, `core/upstream_creds.py` fetches real credentials from a named AWS profile:
 
 ```python
 class BotoCredentialSource:
+    def __init__(self, profile_name: str = "iam-agent-proxy") -> None:
+        self._session = boto3.Session(profile_name=profile_name)
+
     def get(self) -> Credentials:
-        session = boto3.Session()
-        creds = session.get_credentials().get_frozen_credentials()
+        creds = self._session.get_credentials().get_frozen_credentials()
         return Credentials(creds.access_key, creds.secret_key, creds.token)
 ```
 
-No caching is needed — botocore's provider chain handles refresh internally. This source works with any standard credential mechanism: `~/.aws/credentials`, environment variables, instance profiles, IAM Identity Center SSO, etc.
+A single `boto3.Session` is held for the lifetime of the proxy. This is important: botocore's `RefreshableCredentials` machinery (used by SSO, instance profiles, assumed roles) lives on the session's credential resolver object. Re-creating the session on each request would throw away that state and force full provider-chain re-discovery on every AWS call. With a persistent session, botocore can refresh expiring credentials transparently.
+
+The profile defaults to `iam-agent-proxy` so the proxy never silently consumes `[default]` credentials. Override with the `AWS_PROXY_PROFILE` env var. Any standard credential mechanism works: SSO, `credential_process`, static keys, instance profiles.
 
 ### Docker path (elhaz)
 

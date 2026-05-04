@@ -68,7 +68,18 @@ graph LR
 ### Prerequisites
 
 - Python 3.12
-- AWS credentials on the host (any standard source: `~/.aws/credentials`, instance profile, environment variables, SSO, etc.)
+- An AWS profile named `iam-agent-proxy` in `~/.aws/config` (or override with `AWS_PROXY_PROFILE`)
+
+```ini
+# ~/.aws/config
+[profile iam-agent-proxy]
+sso_start_url = https://your-org.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = YourRole
+```
+
+Any credential source works (SSO, `credential_process`, static keys, instance profile). The proxy holds a single session for its lifetime so that botocore can refresh expiring credentials without re-running provider discovery.
 
 ```bash
 bash setup_venv.sh
@@ -233,6 +244,7 @@ The agent is on an internal Docker bridge network. Its only internet egress is t
 
 | Env var | Default | Description |
 |---|---|---|
+| `AWS_PROXY_PROFILE` | `iam-agent-proxy` | AWS profile name used to fetch real credentials for re-signing |
 | `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
 | `PROXY_KEYPAIR_TTL` | `3600` | Proxy keypair lifetime in seconds |
 | `PROXY_MODE` | `record` | `record` (forward all) or `enforce` (check allowlist) |

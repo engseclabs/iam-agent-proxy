@@ -1,4 +1,4 @@
-"""Tests for proxy/upstream_creds.py — BotoCredentialSource."""
+"""Tests for core/upstream_creds.py — BotoCredentialSource."""
 
 from unittest.mock import MagicMock, patch
 
@@ -21,44 +21,62 @@ def _mock_session(access_key: str = "AKIAFAKE", secret: str = "fakesecret", toke
     return session
 
 
+def _make_src(session=None, profile_name="iam-agent-proxy"):
+    """Build a BotoCredentialSource with a mocked boto3.Session."""
+    mock = session or _mock_session()
+    with patch("core.upstream_creds.boto3.Session", return_value=mock) as _:
+        src = BotoCredentialSource(profile_name=profile_name)
+    src._session = mock  # keep mock accessible after patch exits
+    return src, mock
+
+
 def test_get_returns_credentials_object():
-    src = BotoCredentialSource()
-    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session()):
-        result = src.get()
-    assert isinstance(result, Credentials)
+    src, _ = _make_src()
+    assert isinstance(src.get(), Credentials)
 
 
 def test_get_maps_access_key():
-    src = BotoCredentialSource()
-    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session(access_key="AKIATEST")):
-        result = src.get()
-    assert result.access_key == "AKIATEST"
+    src, _ = _make_src(_mock_session(access_key="AKIATEST"))
+    assert src.get().access_key == "AKIATEST"
 
 
 def test_get_maps_secret_key():
-    src = BotoCredentialSource()
-    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session(secret="mysecret")):
-        result = src.get()
-    assert result.secret_key == "mysecret"
+    src, _ = _make_src(_mock_session(secret="mysecret"))
+    assert src.get().secret_key == "mysecret"
 
 
 def test_get_maps_session_token():
-    src = BotoCredentialSource()
-    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session(token="mytoken")):
-        result = src.get()
-    assert result.token == "mytoken"
+    src, _ = _make_src(_mock_session(token="mytoken"))
+    assert src.get().token == "mytoken"
 
 
 def test_get_maps_none_token():
-    src = BotoCredentialSource()
-    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session(token=None)):
-        result = src.get()
-    assert result.token is None
+    src, _ = _make_src(_mock_session(token=None))
+    assert src.get().token is None
+
+
+def test_session_reused_across_calls():
+    """get() must reuse the same session so RefreshableCredentials can refresh."""
+    src, mock = _make_src()
+    src.get()
+    src.get()
+    src.get()
+    assert mock.get_credentials.call_count == 3  # called each time, but same session object
+
+
+def test_uses_iam_agent_proxy_profile_by_default():
+    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session()) as mock_cls:
+        BotoCredentialSource()
+    mock_cls.assert_called_once_with(profile_name="iam-agent-proxy")
+
+
+def test_accepts_custom_profile_name():
+    with patch("core.upstream_creds.boto3.Session", return_value=_mock_session()) as mock_cls:
+        BotoCredentialSource(profile_name="my-custom-profile")
+    mock_cls.assert_called_once_with(profile_name="my-custom-profile")
 
 
 def test_get_calls_get_frozen_credentials():
-    src = BotoCredentialSource()
-    session = _mock_session()
-    with patch("core.upstream_creds.boto3.Session", return_value=session):
-        src.get()
-    session.get_credentials.return_value.get_frozen_credentials.assert_called_once()
+    src, mock = _make_src()
+    src.get()
+    mock.get_credentials.return_value.get_frozen_credentials.assert_called_once()
