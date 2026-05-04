@@ -1,5 +1,0 @@
-proxy.py
-boto3
-botocore
-cryptography
-pydantic

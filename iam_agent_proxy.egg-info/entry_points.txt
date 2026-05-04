@@ -1,4 +1,0 @@
-[console_scripts]
-get-policy = core._policy:main
-iam-agent-proxy = core._proxy:main
-proxy-creds = core._creds:main
