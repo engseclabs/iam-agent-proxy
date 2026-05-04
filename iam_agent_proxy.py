@@ -30,7 +30,7 @@ _CA_DIR = Path.home() / ".iam-agent-proxy"
 _CA_CERT = _CA_DIR / "ca.pem"
 _CA_KEY = _CA_DIR / "ca.key"
 _AWS_CONFIG = Path.home() / ".aws" / "config"
-_PROXY_CREDS = Path(__file__).parent / "proxy-creds"
+_PROXY_CREDS = Path(__file__).parent / "proxy_creds.py"
 _SOCK_PATH = Path.home() / ".iam-agent-proxy" / "creds.sock"
 
 

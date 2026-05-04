@@ -3,11 +3,11 @@
 credential_process helper: connect to the proxy's creds.sock and print the
 credential JSON the AWS SDK expects.
 
-Install to /usr/local/bin/proxy-creds in the agent container and add to
+Install to /usr/local/bin/proxy_creds.py in the agent container and add to
 ~/.aws/config:
 
     [profile proxy]
-    credential_process = /usr/local/bin/proxy-creds
+    credential_process = /usr/local/bin/proxy_creds.py
 
 The SDK calls this when credentials are absent or near expiry, caches the
 result until the returned Expiration, then calls again.
@@ -26,7 +26,7 @@ _TIMEOUT = 10.0  # seconds
 
 
 def _die(message: str) -> None:
-    print(f"proxy-creds: {message}", file=sys.stderr)
+    print(f"proxy_creds.py: {message}", file=sys.stderr)
     sys.exit(1)
 
 

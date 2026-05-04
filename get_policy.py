@@ -3,8 +3,8 @@
 
 Run this in any terminal after the proxy has recorded some AWS calls:
 
-    python get-policy              # print to stdout
-    python get-policy > policy.json
+    python get_policy.py              # print to stdout
+    python get_policy.py > policy.json
 
 The action log is written to ~/.iam-agent-proxy/actions.log by default.
 Override with ACTION_LOG_PATH if you changed the proxy's default.

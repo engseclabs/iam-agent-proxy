@@ -4,11 +4,8 @@ RUN pip install --no-cache-dir awscli
 
 WORKDIR /agent
 
-COPY proxy-creds /usr/local/bin/proxy-creds
-RUN chmod +x /usr/local/bin/proxy-creds
-
-COPY get-policy /usr/local/bin/get-policy
-RUN chmod +x /usr/local/bin/get-policy
+COPY proxy_creds.py /usr/local/bin/proxy_creds.py
+COPY get_policy.py /usr/local/bin/get_policy.py
 
 COPY tests/integration/test_resign.sh /agent/test_resign.sh
 RUN chmod +x /agent/test_resign.sh
@@ -17,7 +14,7 @@ RUN chmod +x /agent/test_resign.sh
 # HTTPS_PROXY and AWS_CA_BUNDLE are injected by docker-compose.
 RUN mkdir -p /root/.aws && printf '\
 [profile proxy]\n\
-credential_process = /usr/local/bin/proxy-creds\n\
+credential_process = python /usr/local/bin/proxy_creds.py\n\
 region = us-east-1\n' > /root/.aws/config
 
 ENV AWS_PROFILE=proxy

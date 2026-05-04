@@ -54,7 +54,7 @@ The container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configur
 ## Extract the observed policy
 
 ```bash
-get-policy
+python get_policy.py
 ```
 
 ## Tear down
@@ -82,7 +82,7 @@ tests/integration/
   docker-compose.yml     — proxy + agent service definitions
   docker/
     proxy/Dockerfile     — proxy container (proxy.py + elhaz in isolated venv)
-    agent/Dockerfile     — agent container (AWS CLI + proxy-creds)
+    agent/Dockerfile     — agent container (AWS CLI + proxy_creds.py)
   elhaz.py               — elhaz credential source used by the proxy container
   test_elhaz.py          — unit tests for elhaz.py
   test_resign.sh         — end-to-end smoke test script (run inside agent container)

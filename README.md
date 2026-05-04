@@ -82,7 +82,7 @@ pip install -r requirements.txt
 python iam_agent_proxy.py
 ```
 
-On first run the proxy generates `~/.iam-agent-proxy/ca.pem` and writes an `[profile iam-agent-proxy]` section into `~/.aws/config` with `credential_process` pointing at `proxy-creds`. It removes the section on clean exit (Ctrl-C).
+On first run the proxy generates `~/.iam-agent-proxy/ca.pem` and writes an `[profile iam-agent-proxy]` section into `~/.aws/config` with `credential_process` pointing at `proxy_creds.py`. It removes the section on clean exit (Ctrl-C).
 
 ### Step 2 — make AWS calls
 
@@ -106,10 +106,10 @@ In the proxy terminal you'll see:
 ### Step 3 — extract the observed policy
 
 ```bash
-python get-policy
+python get_policy.py
 ```
 
-Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `get-policy` reads that file and emits an IAM policy JSON:
+Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `get_policy.py` reads that file and emits an IAM policy JSON:
 
 ```json
 {
@@ -134,12 +134,12 @@ Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is runn
 ~/.iam-agent-proxy/
   ca.pem        # CA cert generated on first run; trusted by the AWS SDK via [profile iam-agent-proxy]
   ca.key        # CA private key
-  creds.sock    # Unix socket that vends proxy keypairs to proxy-creds
+  creds.sock    # Unix socket that vends proxy keypairs to proxy_creds.py
   actions.log   # IAM actions observed by the proxy
 
 ~/.aws/config
   [profile iam-agent-proxy]
-  credential_process = python /path/to/proxy-creds   # written on startup, removed on clean exit
+  credential_process = python /path/to/proxy_creds.py   # written on startup, removed on clean exit
   ca_bundle = ~/.iam-agent-proxy/ca.pem
 ```
 
