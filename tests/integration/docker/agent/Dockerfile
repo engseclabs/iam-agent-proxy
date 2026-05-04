@@ -10,7 +10,7 @@ RUN chmod +x /usr/local/bin/proxy-creds
 COPY get-policy /usr/local/bin/get-policy
 RUN chmod +x /usr/local/bin/get-policy
 
-COPY test_resign.sh /agent/test_resign.sh
+COPY tests/integration/test_resign.sh /agent/test_resign.sh
 RUN chmod +x /agent/test_resign.sh
 
 # AWS CLI config: use proxy-creds for the "proxy" profile.
