@@ -1,22 +1,4 @@
-"""
-iam-agent-proxy entrypoint.
-
-Usage:
-    python iam_agent_proxy.py
-
-On first run generates a CA cert under ~/.iam-agent-proxy/ and writes an
-[profile iam-agent-proxy] section into ~/.aws/config so that any AWS tool
-pointed at AWS_PROFILE=iam-agent-proxy and HTTPS_PROXY=http://localhost:8080
-gets proxy-issued credentials automatically.
-
-Both the profile section and the ca_bundle entry are removed on clean exit.
-
-Config (env vars):
-    PROXY_MODE        "record" (default) or "enforce"
-    ALLOWLIST_PATH    Path to IAM policy JSON (required in enforce mode)
-    ACTION_LOG_PATH   Where resolved actions are written
-                      (default: ~/.iam-agent-proxy/actions.log)
-"""
+"""iam-agent-proxy entrypoint — installed as the `iam-agent-proxy` command."""
 
 import configparser
 import datetime
@@ -30,8 +12,7 @@ _CA_DIR = Path.home() / ".iam-agent-proxy"
 _CA_CERT = _CA_DIR / "ca.pem"
 _CA_KEY = _CA_DIR / "ca.key"
 _AWS_CONFIG = Path.home() / ".aws" / "config"
-_PROXY_CREDS = Path(__file__).parent / "proxy_creds.py"
-_SOCK_PATH = Path.home() / ".iam-agent-proxy" / "creds.sock"
+_SOCK_PATH = _CA_DIR / "creds.sock"
 
 
 def _generate_ca() -> None:
@@ -88,7 +69,8 @@ def _write_aws_profile() -> None:
     if not cfg.has_section(section):
         cfg.add_section(section)
 
-    cfg.set(section, "credential_process", f"{sys.executable} {_PROXY_CREDS}")
+    # proxy-creds is installed on PATH by pip — no path juggling needed
+    cfg.set(section, "credential_process", "proxy-creds")
     cfg.set(section, "ca_bundle", str(_CA_CERT))
 
     with open(_AWS_CONFIG, "w") as f:
@@ -150,5 +132,3 @@ def main() -> None:
         _remove_aws_profile()
 
 
-if __name__ == "__main__":
-    main()

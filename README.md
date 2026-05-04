@@ -1,10 +1,6 @@
 # IAM Agent Proxy
 
-> Isolate credentials as a *credential injection proxy* and stop worrying about exfiltration through prompt injection.
-
-> Then, observe and lockdown IAM permissions with *least privilege guardrails*.
-
-![Gears of Total Recall](assets/header.png)
+IAM Agent proxy is a *credential injection proxy* that supports IAM policy generation and enforcement for *least privilege guardrails*.
 
 ## Credential injection proxy
 
@@ -75,17 +71,16 @@ graph LR
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Step 1 — start the proxy
 
 ```bash
-source venv/bin/activate
-python iam_agent_proxy.py
+iam-agent-proxy
 ```
 
-On first run the proxy generates `~/.iam-agent-proxy/ca.pem` and writes an `[profile iam-agent-proxy]` section into `~/.aws/config` with `credential_process` pointing at `proxy_creds.py`. It removes the section on clean exit (Ctrl-C).
+On first run the proxy generates `~/.iam-agent-proxy/ca.pem` and writes an `[profile iam-agent-proxy]` section into `~/.aws/config` with `credential_process = proxy-creds`. It removes the section on clean exit (Ctrl-C).
 
 ### Step 2 — make AWS calls
 
@@ -109,10 +104,10 @@ In the proxy terminal you'll see:
 ### Step 3 — extract the observed policy
 
 ```bash
-python get_policy.py
+get-policy
 ```
 
-Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `get_policy.py` reads that file and emits an IAM policy JSON:
+Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `get-policy` reads that file and emits an IAM policy JSON:
 
 ```json
 {
@@ -137,12 +132,12 @@ Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is runn
 ~/.iam-agent-proxy/
   ca.pem        # CA cert generated on first run; trusted by the AWS SDK via [profile iam-agent-proxy]
   ca.key        # CA private key
-  creds.sock    # Unix socket that vends proxy keypairs to proxy_creds.py
+  creds.sock    # Unix socket that vends proxy keypairs to proxy-creds
   actions.log   # IAM actions observed by the proxy
 
 ~/.aws/config
   [profile iam-agent-proxy]
-  credential_process = /path/to/venv/bin/python /path/to/proxy_creds.py   # written on startup, removed on clean exit
+  credential_process = proxy-creds   # written on startup, removed on clean exit
   ca_bundle = ~/.iam-agent-proxy/ca.pem
 ```
 

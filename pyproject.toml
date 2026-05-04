@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iam-agent-proxy"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "proxy.py",
+    "boto3",
+    "botocore",
+    "cryptography",
+    "pydantic",
+]
+
+[project.scripts]
+iam-agent-proxy = "core._proxy:main"
+proxy-creds     = "core._creds:main"
+get-policy      = "core._policy:main"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
