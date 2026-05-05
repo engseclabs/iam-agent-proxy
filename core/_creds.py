@@ -1,17 +1,4 @@
-#!/usr/bin/env python3
-"""
-credential_process helper: connect to the proxy's creds.sock and print the
-credential JSON the AWS SDK expects.
-
-Install to /usr/local/bin/proxy-creds in the agent container and add to
-~/.aws/config:
-
-    [profile proxy]
-    credential_process = /usr/local/bin/proxy-creds
-
-The SDK calls this when credentials are absent or near expiry, caches the
-result until the returned Expiration, then calls again.
-"""
+"""proxy-creds entry point — credential_process helper for the iam-agent-proxy profile."""
 
 import json
 import os
@@ -19,8 +6,10 @@ import socket
 import sys
 from pathlib import Path
 
-SOCK_PATH = Path(os.environ.get("PROXY_SOCK_PATH", "/run/proxy/creds.sock"))
-_TIMEOUT = 10.0  # seconds
+SOCK_PATH = Path(
+    os.environ.get("PROXY_SOCK_PATH", str(Path.home() / ".iam-agent-proxy" / "creds.sock"))
+)
+_TIMEOUT = 10.0
 
 
 def _die(message: str) -> None:
@@ -48,7 +37,3 @@ def main() -> None:
         _die(f"invalid JSON from socket: {exc}")
 
     print(json.dumps(creds))
-
-
-if __name__ == "__main__":
-    main()

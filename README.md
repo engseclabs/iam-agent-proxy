@@ -1,10 +1,6 @@
 # IAM Agent Proxy
 
-> Isolate credentials as a *credential injection proxy* and stop worrying about exfiltration through prompt injection.
-
-> Then, observe and lockdown IAM permissions with *least privilege guardrails*.
-
-![Gears of Total Recall](assets/header.png)
+IAM Agent proxy is a *credential injection proxy* that supports IAM policy generation and enforcement for *least privilege guardrails*.
 
 ## Credential injection proxy
 
@@ -18,23 +14,17 @@ graph LR
     Signs with fake creds"]
     proxy["Proxy
     Validates fake creds and then signs with real creds"]
-    elhaz["Elhaz
-    Daemon with real creds"]
     aws["AWS APIs"]
 
     agent -- "Fake SigV4" --> proxy
-    proxy -- "Socket IPC" --> elhaz
-    elhaz -- "Real creds" --> proxy
-    proxy -- "Real SigV4" --> aws
+    proxy -- "Real SigV4 (boto3)" --> aws
 
     classDef agentStyle fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef proxyStyle fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef elhazStyle fill:#f5f5f5,stroke:#737373,color:#262626
     classDef awsStyle fill:#fef3c7,stroke:#d97706,color:#78350f
 
     class agent agentStyle
     class proxy proxyStyle
-    class elhaz elhazStyle
     class aws awsStyle
 ```
 
@@ -73,79 +63,53 @@ graph LR
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- [elhaz](https://github.com/61418/elhaz) installed, daemon running, and the target role added
+- Python 3.12
+- AWS credentials configured for whatever role you want the proxy to re-sign with (any source: SSO, `credential_process`, static keys, instance profile)
+
+### Install
 
 ```bash
-elhaz daemon start
-elhaz daemon add -n sandbox-elhaz   # or whatever elahz config the agent should use
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
 ```
 
-### Step 1 — start the stack
-
-Open two terminal panes. In the first, start the proxy and tail its action stream:
+### Step 1 — start the proxy
 
 ```bash
-ELHAZ_CONFIG_NAME=sandbox-elhaz docker compose up --build proxy
+AWS_PROFILE=my-real-profile iam-agent-proxy
 ```
 
-You'll see the proxy start and log lines as requests come in. Keep this pane visible — resolved IAM actions are logged here and written to `/run/proxy/actions.log` inside the container.
+`AWS_PROFILE` tells the proxy which real AWS credentials to use when re-signing requests. Set it to any profile with the permissions your agent needs (SSO, assumed role, static keys, etc.). Without it the proxy has no credentials and returns a 503 on every request.
 
-### Step 2 — run an integration test (one-liner)
+On first run the proxy generates `~/.iam-agent-proxy/ca.pem` and writes an `[profile iam-agent-proxy]` section into `~/.aws/config` with `credential_process = proxy-creds`. It removes the section on clean exit (Ctrl-C).
 
-To verify the stack is working end-to-end, run a command directly in a throwaway agent container:
+### Step 2 — make AWS calls
+
+In a second terminal:
 
 ```bash
-docker compose run --rm agent aws sts get-caller-identity
-```
+export AWS_PROFILE=iam-agent-proxy
+export HTTPS_PROXY=http://localhost:8080
 
-Expected output:
-
-```json
-{
-    "UserId": "AROAEXAMPLE:boto3-refresh-session",
-    "Account": "123456789012",
-    "Arn": "arn:aws:sts::123456789012:assumed-role/YourRole/boto3-refresh-session"
-}
-```
-
-If you see this, credentials are flowing: proxy keypair → local SigV4 validation → elhaz re-sign → AWS. A `ServiceUnavailable` response means the proxy can't reach the elhaz daemon (check `elhaz daemon status` and that the session is listed in `elhaz daemon list`).
-
-### Step 3 — drop into an interactive agent shell
-
-For longer sessions, open an interactive shell in the agent container:
-
-```bash
-docker compose run --rm agent bash
-```
-
-The container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configured. Run any AWS commands and watch the proxy pane:
-
-```bash
 aws sts get-caller-identity
 aws s3 ls
-aws iam get-role --role-name MyRole
 ```
 
-In the proxy pane you'll see lines like:
+In the proxy terminal you'll see:
 
 ```
 [14:32:01] ALLOWED  sts:GetCallerIdentity
 [14:32:09] ALLOWED  s3:ListAllMyBuckets
-[14:32:15] ALLOWED  iam:GetRole
 ```
 
-Each line is a distinct IAM action the agent actually called — not a guess.
-
-### Step 4 — extract the policy
-
-When you're done running commands, generate a least-privilege policy from everything observed so far:
+### Step 3 — extract the observed policy
 
 ```bash
-get-policy
+iam-agent-proxy policy
 ```
 
-Output:
+Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `iam-agent-proxy policy` reads that file and emits an IAM policy JSON:
 
 ```json
 {
@@ -155,7 +119,6 @@ Output:
       "Sid": "ProxyRecordedActions",
       "Effect": "Allow",
       "Action": [
-        "iam:GetRole",
         "s3:ListAllMyBuckets",
         "sts:GetCallerIdentity"
       ],
@@ -165,51 +128,34 @@ Output:
 }
 ```
 
-Pipe it to a file, tighten the `Resource` fields, and it's ready to use as an IAM policy or a session policy.
-
-### Tear down
-
-```bash
-docker compose down     # stops containers, keeps volumes (CA cert, action log)
-docker compose down -v  # stops containers and removes volumes
-```
-
-## How the containers are wired
+## How it works
 
 ```
-host
-├── elhaz daemon  ←─── ~/.elhaz/sock/daemon.sock (bind-mounted into proxy)
-│
-├── proxy container
-│   ├── mitmdump :8080          — intercepts, validates SigV4, resolves IAM actions, re-signs
-│   ├── elhaz (in /opt/elhaz-venv) — fetches IAC credentials via mounted socket
-│   ├── /run/proxy/creds.sock   — vends per-client proxy keypairs (named volume)
-│   └── /run/mitmproxy/         — CA cert (named volume)
-│
-└── agent container
-    ├── AWS SDK / CLI           — signs requests with proxy keypair
-    ├── proxy-creds             — credential_process helper reads creds.sock
-    ├── HTTPS_PROXY=proxy:8080  — routes all AWS traffic through proxy
-    └── (no elhaz socket, no IAC credentials)
+~/.iam-agent-proxy/
+  ca.pem        # CA cert generated on first run; trusted by the AWS SDK via [profile iam-agent-proxy]
+  ca.key        # CA private key
+  creds.sock    # Unix socket that vends proxy keypairs to proxy-creds
+  actions.log   # IAM actions observed by the proxy
+
+~/.aws/config
+  [profile iam-agent-proxy]
+  credential_process = proxy-creds   # written on startup, removed on clean exit
+  ca_bundle = ~/.iam-agent-proxy/ca.pem
 ```
 
-The agent is on an internal Docker bridge network. Its only internet egress is through the proxy container.
+The proxy uses the boto3 default credential chain to obtain real AWS credentials for re-signing. It holds a single session for its lifetime so that botocore can refresh expiring credentials (SSO, instance profiles, assumed roles) without re-running provider discovery.
 
 ## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
-| `ELHAZ_CONFIG_NAME` | `sandbox-elhaz` | elhaz config name for the IAC role |
-| `ELHAZ_SOCK` | `~/.elhaz/sock/daemon.sock` | Host path to the elhaz daemon socket |
-| `ELHAZ_CONFIG_DIR` | `~/.elhaz/configs` | Host path to elhaz config files |
-| `ELHAZ_SOCKET_PATH` | `/tmp/elhaz.sock` | Socket path inside the proxy container |
-| `PROXY_SOCK_PATH` | `/run/proxy/creds.sock` | Unix socket path for credential vending |
+| `AWS_PROFILE` | boto3 default chain | AWS profile the proxy uses to re-sign requests (set when starting the proxy, not in the agent terminal) |
+| `PROXY_SOCK_PATH` | `~/.iam-agent-proxy/creds.sock` | Unix socket path for credential vending |
 | `PROXY_KEYPAIR_TTL` | `3600` | Proxy keypair lifetime in seconds |
 | `PROXY_MODE` | `record` | `record` (forward all) or `enforce` (check allowlist) |
 | `ALLOWLIST_PATH` | *(required in enforce mode)* | Path to IAM policy JSON allowlist |
+| `ACTION_LOG_PATH` | `~/.iam-agent-proxy/actions.log` | Where resolved actions are written |
 
-Override defaults in `.env` or by prefixing `docker compose up`:
+## Integration tests (Docker + elhaz)
 
-```bash
-ELHAZ_CONFIG_NAME=my-agent-role docker compose up -d
-```
+A Docker-based integration test stack lives in [`tests/integration/`](tests/integration/). It uses [elhaz](https://github.com/61418/elhaz) as the credential source and runs a fully isolated agent/proxy pair. See [`tests/integration/README.md`](tests/integration/README.md) for setup and usage.
