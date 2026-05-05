@@ -129,14 +129,13 @@ def _cmd_start() -> None:
     print("", flush=True)
 
     try:
-        os.environ.setdefault("PROXY_SOCK_PATH", str(_SOCK_PATH))
-
-        # Start the creds server in the parent process so the socket exists
-        # before proxy.py forks workers and before proxy-creds is called.
-        # Workers that also call _ensure_initialized will find the socket live
-        # and skip binding (see _prepare_socket_path).
-        from core.credentials import CredentialStore, start_creds_server
+        import ssl
         import core.addon as _addon
+        from core.credentials import CredentialStore, start_creds_server
+        from proxy.proxy import main as proxy_main
+
+        # Everything runs in-process (threaded=True), so module-level singletons
+        # in core.addon are shared directly with plugin instances — no IPC needed.
         _store = CredentialStore()
         _addon._store = _store
         _addon._upstream_creds = _addon.BotoCredentialSource()
@@ -144,25 +143,21 @@ def _cmd_start() -> None:
         _addon._resolver = _addon.load_resolver()
         start_creds_server(_SOCK_PATH, _store)
 
-        import ssl
         system_ca_bundle = ssl.get_default_verify_paths().cafile or "/etc/ssl/cert.pem"
-
         _CERT_DIR = _CA_DIR / "certificates"
         _CERT_DIR.mkdir(parents=True, exist_ok=True)
 
-        sys.argv = [
-            "proxy",
-            "--hostname", "127.0.0.1",
-            "--port", "8080",
-            "--ca-cert-file", str(_CA_CERT),
-            "--ca-key-file", str(_CA_KEY),
-            "--ca-signing-key-file", str(_CA_KEY),
-            "--ca-cert-dir", str(_CERT_DIR),
-            "--ca-file", system_ca_bundle,
-            "--plugins", "core.addon.ResignPlugin",
-        ]
-        from proxy.proxy import main as proxy_main
-        proxy_main()
+        proxy_main(
+            threaded=True,
+            hostname="127.0.0.1",
+            port=8080,
+            ca_cert_file=str(_CA_CERT),
+            ca_key_file=str(_CA_KEY),
+            ca_signing_key_file=str(_CA_KEY),
+            ca_cert_dir=str(_CERT_DIR),
+            ca_file=system_ca_bundle,
+            plugins=["core.addon.ResignPlugin"],
+        )
     finally:
         _remove_aws_profile()
 

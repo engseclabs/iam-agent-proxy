@@ -34,24 +34,19 @@ def _new_access_key_id() -> str:
 class CredentialStore:
     """Single shared keypair for the proxy lifetime.
 
-    The keypair is stored in environment variables so all worker processes
-    (forked by proxy.py) can validate requests without IPC. The creds socket
-    serves this same keypair to every client that connects.
+    Lives entirely in memory — no files, no env vars. Because proxy.py runs
+    in threaded mode, plugin instances share this object directly.  The creds
+    socket serves the same keypair to every client that connects.
     """
 
-    _ENV_KEY = "_PROXY_CRED_KEY"
-    _ENV_SECRET = "_PROXY_CRED_SECRET"
-    _ENV_EXPIRY = "_PROXY_CRED_EXPIRY"
-
     def __init__(self) -> None:
-        # Generate once on construction; inherited by forked workers via env.
-        if self._ENV_KEY not in os.environ:
-            cred = self._generate()
-            os.environ[self._ENV_KEY] = cred.access_key_id
-            os.environ[self._ENV_SECRET] = cred.secret_access_key
-            os.environ[self._ENV_EXPIRY] = cred.expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
-            log.info("Issued proxy keypair access_key_id=%s expiry=%s",
-                     cred.access_key_id, cred.expiry)
+        self._lock = threading.Lock()
+        self._cred: ClientCred = self._generate()
+        log.info(
+            "Issued proxy keypair access_key_id=%s expiry=%s",
+            self._cred.access_key_id,
+            self._cred.expiry,
+        )
 
     def _generate(self) -> ClientCred:
         return ClientCred(
@@ -62,16 +57,14 @@ class CredentialStore:
 
     def issue(self) -> ClientCred:
         """Return the current keypair (same for every caller)."""
-        return ClientCred(
-            access_key_id=os.environ[self._ENV_KEY],
-            secret_access_key=os.environ[self._ENV_SECRET],
-            expiry=datetime.fromisoformat(os.environ[self._ENV_EXPIRY]),
-        )
+        with self._lock:
+            return self._cred
 
     def valid_secrets_for(self, access_key_id: str) -> list[str] | None:
-        """Return the secret if access_key_id matches the current keypair."""
-        if access_key_id == os.environ.get(self._ENV_KEY):
-            return [os.environ[self._ENV_SECRET]]
+        """Return [secret] if access_key_id matches the current keypair, else None."""
+        with self._lock:
+            if access_key_id == self._cred.access_key_id:
+                return [self._cred.secret_access_key]
         return None
 
 
@@ -103,7 +96,7 @@ def _prepare_socket_path(sock_path: Path) -> bool:
 
 
 def _serve_creds(sock_path: Path, store: CredentialStore) -> None:
-    """Issue a fresh keypair per connection and send it to the client (blocking)."""
+    """Serve the shared keypair to every client that connects (blocking)."""
     if not _prepare_socket_path(sock_path):
         log.debug("Credential server already running at %s, skipping", sock_path)
         return

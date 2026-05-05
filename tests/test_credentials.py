@@ -1,7 +1,6 @@
 """Tests for core/credentials.py — CredentialStore unit tests + socket integration."""
 
 import json
-import os
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,16 +38,6 @@ def test_access_key_id_unique():
 # CredentialStore
 # --------------------------------------------------------------------------- #
 
-@pytest.fixture(autouse=True)
-def clean_env():
-    """Remove proxy cred env vars before/after each test for isolation."""
-    for k in ("_PROXY_CRED_KEY", "_PROXY_CRED_SECRET", "_PROXY_CRED_EXPIRY"):
-        os.environ.pop(k, None)
-    yield
-    for k in ("_PROXY_CRED_KEY", "_PROXY_CRED_SECRET", "_PROXY_CRED_EXPIRY"):
-        os.environ.pop(k, None)
-
-
 def test_issue_returns_client_cred():
     store = CredentialStore()
     assert isinstance(store.issue(), ClientCred)
@@ -85,12 +74,12 @@ def test_valid_secrets_unknown_key_returns_none():
     assert store.valid_secrets_for("AKIAUNKNOWN12345678") is None
 
 
-def test_keypair_shared_across_store_instances():
-    """Two CredentialStore instances in the same process share the keypair via env."""
+def test_different_store_instances_have_different_keypairs():
+    """Each CredentialStore generates its own independent keypair in memory."""
     store1 = CredentialStore()
-    key = store1.issue().access_key_id
     store2 = CredentialStore()
-    assert store2.valid_secrets_for(key) is not None
+    # They're independent — store2 cannot validate store1's key
+    assert store2.valid_secrets_for(store1.issue().access_key_id) is None
 
 
 # --------------------------------------------------------------------------- #
