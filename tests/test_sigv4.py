@@ -93,18 +93,6 @@ def test_validate_sigv4_valid_signature():
     assert validate_sigv4(method, url, headers, body, store) is True
 
 
-def test_validate_sigv4_accepts_prev_secret():
-    store = make_store_with(
-        access_key_id="AKIAPROXYTEST12345678",
-        secret="newsecret",
-        prev_secret="oldsecret",
-    )
-    method, url, headers, body = make_signed_request(
-        access_key_id="AKIAPROXYTEST12345678",
-        secret="oldsecret",
-    )
-    assert validate_sigv4(method, url, headers, body, store) is True
-
 
 # --------------------------------------------------------------------------- #
 # validate_sigv4 — rejection paths

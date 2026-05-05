@@ -130,8 +130,11 @@ class ResignPlugin(HttpProxyBasePlugin):
 
         _ensure_initialized()
 
-        host_bytes = request.host or b""
-        host = host_bytes.decode()
+        # After TLS interception, request.host is None — fall back to Host header.
+        host_bytes = request.host
+        if not host_bytes and request.headers and b"host" in request.headers:
+            host_bytes = request.headers[b"host"][1]
+        host = (host_bytes or b"").decode().split(":")[0]  # strip port if present
         parsed = parse_aws_host(host)
         if parsed is None:
             return request
@@ -151,7 +154,10 @@ class ResignPlugin(HttpProxyBasePlugin):
     def _handle(self, request: HttpParser, service: str, region: str) -> HttpParser:
         method = (request.method or b"GET").decode()
         path = (request.path or b"/").decode()
-        host = (request.host or b"").decode()
+        host_bytes = request.host
+        if not host_bytes and request.headers and b"host" in request.headers:
+            host_bytes = request.headers[b"host"][1]
+        host = (host_bytes or b"").decode().split(":")[0]
         headers = _headers_dict(request)
         body = request.body or b""
 
@@ -181,16 +187,19 @@ class ResignPlugin(HttpProxyBasePlugin):
         if actions:
             _emit_actions(actions, service, method, path, blocked=False)
 
-        # Strip inbound auth headers
-        for h in _AUTH_HEADERS:
-            request.del_header(h)
-
         try:
             creds = _upstream_creds.get()
         except Exception as exc:
             raise UpstreamError("Proxy could not obtain IAC credentials.") from exc
 
-        # Rebuild headers dict after stripping for re-signing
+        # Strip inbound auth headers before signing so they don't pollute
+        # the canonical request that botocore builds.
+        for h in _AUTH_HEADERS:
+            request.del_header(h)
+
+        # Re-sign using upstream (real) credentials.
+        # Pass the cleaned headers (without inbound auth) so botocore builds the
+        # canonical request correctly against the actual body.
         clean_headers = _headers_dict(request)
         aws_request = AWSRequest(
             method=method,
@@ -201,9 +210,17 @@ class ResignPlugin(HttpProxyBasePlugin):
         auth_cls = S3SigV4Auth if service == "s3" else SigV4Auth
         auth_cls(creds, service, region).add_auth(aws_request)
 
-        # Write the new auth headers back onto the proxy.py request
+        # Inject only the auth headers that botocore wrote — identified by
+        # checking which keys are new (not in clean_headers) or were changed.
+        clean_lower = {k.lower() for k in clean_headers}
+        injected = {}
         for key, value in aws_request.headers.items():
-            request.add_header(key.encode(), value.encode())
+            key_lower = key.lower()
+            # Add if botocore wrote it and it wasn't already in the stripped headers
+            if key_lower not in clean_lower:
+                request.add_header(key.encode(), value.encode())
+                injected[key] = value
 
-        log.info("Request re-signed for %s/%s", service, region)
+        log.info("Request re-signed for %s/%s injected_headers=%s", service, region, list(injected.keys()))
+        log.debug("Re-signed Authorization: %s", injected.get("Authorization", "")[:80])
         return request

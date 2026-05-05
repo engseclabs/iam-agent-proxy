@@ -41,14 +41,14 @@ def make_store_with(
     secret: str = "testsecret",
     prev_secret: str | None = None,
 ) -> CredentialStore:
-    store = CredentialStore()
-    cred = make_client_cred(
-        access_key_id=access_key_id,
-        secret_access_key=secret,
-        prev_secret=prev_secret,
-    )
-    store._store[access_key_id] = cred
-    return store
+    """Create a CredentialStore pre-seeded with known credentials via env vars."""
+    import os
+    from datetime import timedelta
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    os.environ["_PROXY_CRED_KEY"] = access_key_id
+    os.environ["_PROXY_CRED_SECRET"] = secret
+    os.environ["_PROXY_CRED_EXPIRY"] = expiry
+    return CredentialStore()
 
 
 def _hmac_sha256(key: bytes, data: str) -> bytes:
@@ -163,9 +163,14 @@ def cred_sock_path() -> Path:
 
 @pytest.fixture()
 def running_creds_server(cred_sock_path):
+    import os
+    for k in ("_PROXY_CRED_KEY", "_PROXY_CRED_SECRET", "_PROXY_CRED_EXPIRY"):
+        os.environ.pop(k, None)
     store = CredentialStore()
     t = threading.Thread(target=_serve_creds, args=(cred_sock_path, store), daemon=True)
     t.start()
     _wait_for_socket(cred_sock_path)
     yield cred_sock_path, store
+    for k in ("_PROXY_CRED_KEY", "_PROXY_CRED_SECRET", "_PROXY_CRED_EXPIRY"):
+        os.environ.pop(k, None)
     # daemon thread exits with the test process; socket cleaned up by OS

@@ -32,30 +32,47 @@ def _new_access_key_id() -> str:
 # --------------------------------------------------------------------------- #
 
 class CredentialStore:
-    """Issues and tracks one unique keypair per socket connection."""
+    """Single shared keypair for the proxy lifetime.
+
+    The keypair is stored in environment variables so all worker processes
+    (forked by proxy.py) can validate requests without IPC. The creds socket
+    serves this same keypair to every client that connects.
+    """
+
+    _ENV_KEY = "_PROXY_CRED_KEY"
+    _ENV_SECRET = "_PROXY_CRED_SECRET"
+    _ENV_EXPIRY = "_PROXY_CRED_EXPIRY"
 
     def __init__(self) -> None:
-        self._store: dict[str, ClientCred] = {}
-        self._lock = threading.Lock()
+        # Generate once on construction; inherited by forked workers via env.
+        if self._ENV_KEY not in os.environ:
+            cred = self._generate()
+            os.environ[self._ENV_KEY] = cred.access_key_id
+            os.environ[self._ENV_SECRET] = cred.secret_access_key
+            os.environ[self._ENV_EXPIRY] = cred.expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
+            log.info("Issued proxy keypair access_key_id=%s expiry=%s",
+                     cred.access_key_id, cred.expiry)
 
-    def issue(self) -> ClientCred:
-        cred = ClientCred(
+    def _generate(self) -> ClientCred:
+        return ClientCred(
             access_key_id=_new_access_key_id(),
             secret_access_key=secrets.token_hex(32),
             expiry=datetime.now(timezone.utc) + timedelta(seconds=PROXY_KEYPAIR_TTL),
         )
-        with self._lock:
-            self._store[cred.access_key_id] = cred
-        log.info("Issued proxy keypair access_key_id=%s expiry=%s", cred.access_key_id, cred.expiry)
-        return cred
+
+    def issue(self) -> ClientCred:
+        """Return the current keypair (same for every caller)."""
+        return ClientCred(
+            access_key_id=os.environ[self._ENV_KEY],
+            secret_access_key=os.environ[self._ENV_SECRET],
+            expiry=datetime.fromisoformat(os.environ[self._ENV_EXPIRY]),
+        )
 
     def valid_secrets_for(self, access_key_id: str) -> list[str] | None:
-        """Return [current_secret, prev_secret?] for the given key, or None if unknown."""
-        with self._lock:
-            cred = self._store.get(access_key_id)
-        if cred is None:
-            return None
-        return [cred.secret_access_key, *([cred.prev_secret] if cred.prev_secret else [])]
+        """Return the secret if access_key_id matches the current keypair."""
+        if access_key_id == os.environ.get(self._ENV_KEY):
+            return [os.environ[self._ENV_SECRET]]
+        return None
 
 
 # --------------------------------------------------------------------------- #

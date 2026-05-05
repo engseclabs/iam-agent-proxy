@@ -136,10 +136,19 @@ def _cmd_start() -> None:
         # Workers that also call _ensure_initialized will find the socket live
         # and skip binding (see _prepare_socket_path).
         from core.credentials import CredentialStore, start_creds_server
-        start_creds_server(_SOCK_PATH, CredentialStore())
+        import core.addon as _addon
+        _store = CredentialStore()
+        _addon._store = _store
+        _addon._upstream_creds = _addon.BotoCredentialSource()
+        _addon._allowlist = None  # record mode
+        _addon._resolver = _addon.load_resolver()
+        start_creds_server(_SOCK_PATH, _store)
 
         import ssl
         system_ca_bundle = ssl.get_default_verify_paths().cafile or "/etc/ssl/cert.pem"
+
+        _CERT_DIR = _CA_DIR / "certificates"
+        _CERT_DIR.mkdir(parents=True, exist_ok=True)
 
         sys.argv = [
             "proxy",
@@ -148,6 +157,7 @@ def _cmd_start() -> None:
             "--ca-cert-file", str(_CA_CERT),
             "--ca-key-file", str(_CA_KEY),
             "--ca-signing-key-file", str(_CA_KEY),
+            "--ca-cert-dir", str(_CERT_DIR),
             "--ca-file", system_ca_bundle,
             "--plugins", "core.addon.ResignPlugin",
         ]
