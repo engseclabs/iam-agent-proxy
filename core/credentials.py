@@ -62,27 +62,34 @@ class CredentialStore:
 # Unix socket credential server
 # --------------------------------------------------------------------------- #
 
-def _prepare_socket_path(sock_path: Path) -> None:
-    """Remove a stale socket file if present; raise if a live server is bound there."""
+def _prepare_socket_path(sock_path: Path) -> bool:
+    """Remove a stale socket file if present.
+
+    Returns True if the caller should proceed to bind, False if a live server
+    is already listening there (another worker beat us to it — skip quietly).
+    """
     sock_path.parent.mkdir(parents=True, exist_ok=True)
     if not sock_path.exists():
-        return
+        return True
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         probe.connect(str(sock_path))
-        probe.close()
-        raise ProxyError(f"A server is already listening on {sock_path}")
+        # A live server is already bound — another worker owns it.
+        return False
     except ConnectionRefusedError:
         sock_path.unlink()
+        return True
     except FileNotFoundError:
-        pass
+        return True
     finally:
         probe.close()
 
 
 def _serve_creds(sock_path: Path, store: CredentialStore) -> None:
     """Issue a fresh keypair per connection and send it to the client (blocking)."""
-    _prepare_socket_path(sock_path)
+    if not _prepare_socket_path(sock_path):
+        log.debug("Credential server already running at %s, skipping", sock_path)
+        return
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as srv:
         srv.bind(str(sock_path))

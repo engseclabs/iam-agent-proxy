@@ -131,16 +131,6 @@ def _cmd_start() -> None:
     try:
         os.environ.setdefault("PROXY_SOCK_PATH", str(_SOCK_PATH))
 
-        # Start the credential server eagerly so proxy-creds works immediately,
-        # before any AWS request has come through the proxy.
-        from core.credentials import CredentialStore, start_creds_server
-        _store = CredentialStore()
-        start_creds_server(_SOCK_PATH, _store)
-
-        # Also wire the store into the addon's singleton so it isn't recreated.
-        import core.addon as _addon
-        _addon._store = _store
-
         import ssl
         system_ca_bundle = ssl.get_default_verify_paths().cafile or "/etc/ssl/cert.pem"
 

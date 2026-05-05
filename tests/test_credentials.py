@@ -123,14 +123,14 @@ def test_prepare_removes_stale_socket():
     assert not sock_path.exists()
 
 
-def test_prepare_raises_if_live_server_present():
+def test_prepare_returns_false_if_live_server_present():
+    """When a live server is already bound, _prepare_socket_path returns False (skip quietly)."""
     sock_path = _short_sock_path()
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(str(sock_path))
     srv.listen(1)
     try:
-        with pytest.raises(ProxyError, match="already listening"):
-            _prepare_socket_path(sock_path)
+        assert _prepare_socket_path(sock_path) is False
     finally:
         srv.close()
         sock_path.unlink(missing_ok=True)
