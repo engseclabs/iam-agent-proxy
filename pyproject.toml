@@ -17,7 +17,6 @@ dependencies = [
 [project.scripts]
 iam-agent-proxy = "core._proxy:main"
 proxy-creds     = "core._creds:main"
-get-policy      = "core._policy:main"
 
 [tool.setuptools.packages.find]
 include = ["core*"]

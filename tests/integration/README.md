@@ -54,7 +54,7 @@ The container has `AWS_PROFILE`, `HTTPS_PROXY`, and `AWS_CA_BUNDLE` pre-configur
 ## Extract the observed policy
 
 ```bash
-python get_policy.py
+iam-agent-proxy policy
 ```
 
 ## Tear down

@@ -104,10 +104,10 @@ In the proxy terminal you'll see:
 ### Step 3 — extract the observed policy
 
 ```bash
-get-policy
+iam-agent-proxy policy
 ```
 
-Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `get-policy` reads that file and emits an IAM policy JSON:
+Actions are recorded to `~/.iam-agent-proxy/actions.log` while the proxy is running. `iam-agent-proxy policy` reads that file and emits an IAM policy JSON:
 
 ```json
 {

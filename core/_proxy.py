@@ -1,8 +1,10 @@
 """iam-agent-proxy entrypoint — installed as the `iam-agent-proxy` command."""
 
+import argparse
 import configparser
 import datetime
 import ipaddress
+import json
 import os
 import signal
 import sys
@@ -13,10 +15,16 @@ _CA_CERT = _CA_DIR / "ca.pem"
 _CA_KEY = _CA_DIR / "ca.key"
 _AWS_CONFIG = Path.home() / ".aws" / "config"
 _SOCK_PATH = _CA_DIR / "creds.sock"
+_ACTION_LOG = Path(
+    os.environ.get("ACTION_LOG_PATH", str(_CA_DIR / "actions.log"))
+)
 
+
+# --------------------------------------------------------------------------- #
+# CA cert
+# --------------------------------------------------------------------------- #
 
 def _generate_ca() -> None:
-    """Generate a self-signed RSA-4096 CA cert valid for 10 years."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -58,8 +66,11 @@ def _generate_ca() -> None:
     print(f"Generated CA cert: {_CA_CERT}", flush=True)
 
 
+# --------------------------------------------------------------------------- #
+# ~/.aws/config management
+# --------------------------------------------------------------------------- #
+
 def _write_aws_profile() -> None:
-    """Write [profile iam-agent-proxy] into ~/.aws/config."""
     _AWS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     cfg = configparser.ConfigParser()
     if _AWS_CONFIG.exists():
@@ -78,7 +89,6 @@ def _write_aws_profile() -> None:
 
 
 def _remove_aws_profile() -> None:
-    """Remove the [profile iam-agent-proxy] section written on startup."""
     if not _AWS_CONFIG.exists():
         return
     cfg = configparser.ConfigParser()
@@ -89,26 +99,27 @@ def _remove_aws_profile() -> None:
             cfg.write(f)
 
 
-def _setup_signal_handlers() -> None:
-    def _cleanup(signum, frame):
-        _remove_aws_profile()
-        sys.exit(0)
+# --------------------------------------------------------------------------- #
+# Subcommands
+# --------------------------------------------------------------------------- #
 
-    signal.signal(signal.SIGINT, _cleanup)
-    signal.signal(signal.SIGTERM, _cleanup)
-
-
-def main() -> None:
+def _cmd_start() -> None:
     if not _CA_CERT.exists() or not _CA_KEY.exists():
         _generate_ca()
 
     _SOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"CA cert:    {_CA_CERT}", flush=True)
-    print(f"Action log: {_CA_DIR / 'actions.log'}", flush=True)
+    print(f"Action log: {_ACTION_LOG}", flush=True)
     print("Writing [profile iam-agent-proxy] to ~/.aws/config", flush=True)
     _write_aws_profile()
-    _setup_signal_handlers()
+
+    def _cleanup(signum, frame):
+        _remove_aws_profile()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _cleanup)
+    signal.signal(signal.SIGTERM, _cleanup)
 
     print("", flush=True)
     print("In a second terminal, run AWS commands with:", flush=True)
@@ -117,7 +128,6 @@ def main() -> None:
     print("", flush=True)
 
     try:
-        # PROXY_SOCK_PATH env var picked up by core/addon.py
         os.environ.setdefault("PROXY_SOCK_PATH", str(_SOCK_PATH))
         from proxy.proxy import main as proxy_main
         proxy_main([
@@ -132,3 +142,56 @@ def main() -> None:
         _remove_aws_profile()
 
 
+def _cmd_policy() -> None:
+    if not _ACTION_LOG.exists():
+        print(
+            f"No action log found at {_ACTION_LOG}\n"
+            "Make sure the proxy is running and you have made some AWS calls.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    actions = sorted({
+        line.strip()
+        for line in _ACTION_LOG.read_text().splitlines()
+        if line.strip()
+    })
+
+    if not actions:
+        print("Action log is empty. Run some AWS commands first.", file=sys.stderr)
+        sys.exit(1)
+
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "ProxyRecordedActions",
+                "Effect": "Allow",
+                "Action": actions,
+                "Resource": "*",
+            }
+        ],
+    }
+    print(json.dumps(policy, indent=2))
+
+
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="iam-agent-proxy",
+        description="AWS credential injection proxy with least-privilege recording.",
+    )
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("start", help="Start the proxy (default when no subcommand given)")
+    sub.add_parser("policy", help="Print the observed IAM policy from the action log")
+
+    args = parser.parse_args()
+
+    if args.command == "policy":
+        _cmd_policy()
+    else:
+        # default: start (also handles explicit "start")
+        _cmd_start()
