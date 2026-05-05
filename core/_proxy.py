@@ -129,15 +129,17 @@ def _cmd_start() -> None:
 
     try:
         os.environ.setdefault("PROXY_SOCK_PATH", str(_SOCK_PATH))
-        from proxy.proxy import main as proxy_main
-        proxy_main([
+        sys.argv = [
+            "proxy",
             "--hostname", "127.0.0.1",
             "--port", "8080",
             "--ca-cert-file", str(_CA_CERT),
             "--ca-key-file", str(_CA_KEY),
             "--ca-signing-key-file", str(_CA_KEY),
             "--plugins", "core.addon.ResignPlugin",
-        ])
+        ]
+        from proxy.proxy import main as proxy_main
+        proxy_main()
     finally:
         _remove_aws_profile()
 
