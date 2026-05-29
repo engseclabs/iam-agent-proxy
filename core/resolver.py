@@ -6,6 +6,7 @@ Uses iann0036/iam-dataset map.json for SDK operation → IAM action mapping.
 
 __all__ = ["ActionResolver", "load_resolver"]
 
+import importlib.resources
 import json
 import logging
 import re
@@ -16,7 +17,7 @@ from botocore.loaders import Loader
 
 log = logging.getLogger(__name__)
 
-_MAP_JSON_PATH = Path(__file__).parent.parent / "docs" / "map.json"
+_MAP_JSON_PATH = Path(importlib.resources.files("core.data") / "map.json")
 
 
 # --------------------------------------------------------------------------- #

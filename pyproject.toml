@@ -20,3 +20,6 @@ proxy-creds     = "core._creds:main"
 
 [tool.setuptools.packages.find]
 include = ["core*"]
+
+[tool.setuptools.package-data]
+"core.data" = ["*.json"]
