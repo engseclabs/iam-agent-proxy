@@ -104,7 +104,7 @@ def _remove_aws_profile() -> None:
 # Subcommands
 # --------------------------------------------------------------------------- #
 
-def _cmd_start() -> None:
+def _cmd_start(port: int = 8080) -> None:
     if not _CA_CERT.exists() or not _CA_KEY.exists():
         _generate_ca()
 
@@ -125,7 +125,7 @@ def _cmd_start() -> None:
     print("", flush=True)
     print("In a second terminal, run AWS commands with:", flush=True)
     print("  export AWS_PROFILE=iam-agent-proxy", flush=True)
-    print("  export HTTPS_PROXY=http://localhost:8080", flush=True)
+    print(f"  export HTTPS_PROXY=http://localhost:{port}", flush=True)
     print("", flush=True)
 
     try:
@@ -147,7 +147,7 @@ def _cmd_start() -> None:
         sys.argv = [
             "proxy",
             "--hostname", "127.0.0.1",
-            "--port", "8080",
+            "--port", str(port),
             "--ca-cert-file", str(_CA_CERT),
             "--ca-key-file", str(_CA_KEY),
             "--ca-signing-key-file", str(_CA_KEY),
@@ -203,7 +203,8 @@ def main() -> None:
         description="AWS credential injection proxy with least-privilege recording.",
     )
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("start", help="Start the proxy (default when no subcommand given)")
+    start_parser = sub.add_parser("start", help="Start the proxy (default when no subcommand given)")
+    start_parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
     sub.add_parser("policy", help="Print the observed IAM policy from the action log")
 
     args = parser.parse_args()
@@ -212,4 +213,5 @@ def main() -> None:
         _cmd_policy()
     else:
         # default: start (also handles explicit "start")
-        _cmd_start()
+        port = getattr(args, "port", 8080)
+        _cmd_start(port=port)
