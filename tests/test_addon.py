@@ -159,6 +159,21 @@ def test_make_reject_content_type_json_for_json_services():
     assert rej.headers.get(b"Content-Type") == b"application/json"
 
 
+@pytest.mark.parametrize(
+    ("service", "expected_content_type"),
+    [
+        ("dynamodb", b"application/json"),
+        ("bedrock", b"application/json"),
+        ("execute-api", b"application/json"),
+        ("s3", b"text/xml"),
+        ("iam", b"text/xml"),
+    ],
+)
+def test_make_reject_content_type_follows_service_protocol(service, expected_content_type):
+    rej = _make_reject(ValidationError("x"), service)
+    assert rej.headers.get(b"Content-Type") == expected_content_type
+
+
 def test_make_reject_xml_body():
     rej = _make_reject(ValidationError("bad token"), "iam")
     root = ET.fromstring(rej.body)
