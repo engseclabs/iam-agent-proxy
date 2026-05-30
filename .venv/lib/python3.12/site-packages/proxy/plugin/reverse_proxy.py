@@ -1,0 +1,76 @@
+# -*- coding: utf-8 -*-
+"""
+    proxy.py
+    ~~~~~~~~
+    ⚡⚡⚡ Fast, Lightweight, Pluggable, TLS interception capable proxy server focused on
+    Network monitoring, controls & Application development, testing, debugging.
+
+    :copyright: (c) 2013-present by Abhinav Singh and contributors.
+    :license: BSD, see LICENSE for more details.
+
+    .. spelling::
+
+       Lua
+"""
+import re
+from typing import TYPE_CHECKING, List, Tuple, Union
+
+from ..http import Url
+from ..http.parser import HttpParser
+from ..http.server import ReverseProxyBasePlugin
+from ..common.types import RePattern
+from ..http.exception.base import HttpProtocolException
+
+
+if TYPE_CHECKING:
+    from ..core.connection import TcpServerConnection
+
+
+class ReverseProxyPlugin(ReverseProxyBasePlugin):
+    """This example plugin is equivalent to following Nginx configuration::
+
+        ```text
+        location /get {
+            proxy_pass http://httpbin.org/get
+        }
+        ```
+
+    Plugin also demonstrates how to write "Python" equivalent for any
+    "Nginx Lua" based configuration i.e. your plugin code will have
+    full control over what do after one of your route has matched.
+    """
+
+    def routes(self) -> List[Union[str, Tuple[str, List[bytes]]]]:
+        return [
+            # A static route
+            (
+                r'/get$',
+                [b'http://httpbingo.org/get', b'https://httpbingo.org/get'],
+            ),
+            # A dynamic route to catch requests on "/get/<int>""
+            # See "handle_route" method below for what we do when
+            # this pattern matches.
+            r'/get/(\d+)$',
+        ]
+
+    def handle_route(
+        self,
+        request: HttpParser,
+        pattern: RePattern,
+    ) -> Union[memoryview, Url, 'TcpServerConnection']:
+        """For our example dynamic route, we want to simply convert
+        any incoming request to "/get/1" into "/get?id=1" when serving from upstream.
+        """
+        choice: Url = Url.from_bytes(b'http://httpbingo.org/get')
+        assert request.path
+        result = re.search(pattern, request.path.decode())
+        if not result or len(result.groups()) != 1:
+            raise HttpProtocolException('Invalid request')
+        assert choice.remainder == b'/get'
+        # NOTE: Internally, reverse proxy core replaces
+        # original request.path with the choice.remainder value.
+        # e.g. for this example, request.path will be "/get/1".
+        # Core will automatically replace that with "/get?id=1"
+        # before dispatching request to choice of upstream server.
+        choice.remainder += f'?id={result.groups()[0]}'.encode()
+        return choice

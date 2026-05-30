@@ -1,0 +1,3 @@
+[console_scripts]
+grout = proxy:grout
+proxy = proxy:entry_point

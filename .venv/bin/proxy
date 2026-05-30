@@ -1,0 +1,6 @@
+#!/tmp/workspace/engseclabs/iam-agent-proxy/.venv/bin/python3
+import sys
+from proxy import entry_point
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(entry_point())
