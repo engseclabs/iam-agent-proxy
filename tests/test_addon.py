@@ -1,6 +1,7 @@
 """Tests for proxy/addon.py — ResignPlugin._handle and handle_client_request."""
 
 import json
+import xml.etree.ElementTree as ET
 
 import pytest
 from botocore.credentials import Credentials
@@ -130,27 +131,40 @@ def _make_plugin(
 
 def test_make_reject_status_for_validation_error():
     exc = ValidationError("bad token")
-    rej = _make_reject(exc)
+    rej = _make_reject(exc, "s3")
     assert rej.status_code == 403
 
 
 def test_make_reject_status_for_upstream_error():
     exc = UpstreamError("down")
-    rej = _make_reject(exc)
+    rej = _make_reject(exc, "s3")
     assert rej.status_code == 503
 
 
-def test_make_reject_body_is_error_envelope():
+def test_make_reject_body_is_error_envelope_for_json_services():
     exc = ValidationError("bad token")
-    rej = _make_reject(exc)
+    rej = _make_reject(exc, "lambda")
     body = json.loads(rej.body)
     assert body["Error"]["Code"] == "InvalidClientTokenId"
     assert "bad token" in body["Error"]["Message"]
 
 
-def test_make_reject_content_type():
-    rej = _make_reject(ValidationError("x"))
+def test_make_reject_content_type_xml_for_most_services():
+    rej = _make_reject(ValidationError("x"), "s3")
+    assert rej.headers.get(b"Content-Type") == b"text/xml"
+
+
+def test_make_reject_content_type_json_for_json_services():
+    rej = _make_reject(ValidationError("x"), "lambda")
     assert rej.headers.get(b"Content-Type") == b"application/json"
+
+
+def test_make_reject_xml_body():
+    rej = _make_reject(ValidationError("bad token"), "iam")
+    root = ET.fromstring(rej.body)
+    assert root.tag == "ErrorResponse"
+    assert root.findtext("./Error/Code") == "InvalidClientTokenId"
+    assert "bad token" in (root.findtext("./Error/Message") or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -285,8 +299,8 @@ def test_enforcement_blocked_body_has_access_denied_code():
     request = _make_signed_parser()
     with pytest.raises(HttpRequestRejected) as exc_info:
         plugin.handle_client_request(request)
-    body = json.loads(exc_info.value.body)
-    assert body["Error"]["Code"] == "AccessDenied"
+    root = ET.fromstring(exc_info.value.body)
+    assert root.findtext("./Error/Code") == "AccessDenied"
 
 
 def test_enforcement_permits_empty_action_list():
@@ -312,12 +326,12 @@ def test_enforcement_blocks_multi_action_if_any_denied():
 
 def test_make_reject_status_for_enforcement_error():
     exc = EnforcementError("not allowed")
-    rej = _make_reject(exc)
+    rej = _make_reject(exc, "s3")
     assert rej.status_code == 403
 
 
 def test_make_reject_code_for_enforcement_error():
     exc = EnforcementError("not allowed")
-    rej = _make_reject(exc)
-    body = json.loads(rej.body)
-    assert body["Error"]["Code"] == "AccessDenied"
+    rej = _make_reject(exc, "s3")
+    root = ET.fromstring(rej.body)
+    assert root.findtext("./Error/Code") == "AccessDenied"
