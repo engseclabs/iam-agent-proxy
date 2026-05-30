@@ -7,6 +7,7 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from botocore.auth import S3SigV4Auth, SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -42,7 +43,7 @@ _AUTH_HEADERS = {
     b"x-amz-security-token",
     b"x-amz-content-sha256",
 }
-
+_JSON_ERROR_SERVICES = {"lambda", "apigateway", "execute-api"}
 
 def _load_allowlist() -> Allowlist | None:
     if _PROXY_MODE != "enforce":
@@ -97,19 +98,37 @@ def _ensure_initialized() -> None:
         log.info("Action log: %s", _ACTION_LOG_PATH)
 
 
-def _make_reject(exc: ProxyError) -> HttpRequestRejected:
+def _make_reject(exc: ProxyError, service: str) -> HttpRequestRejected:
     status = error_status(exc)
-    body = ErrorEnvelope.from_exc(exc.code, str(exc)).model_dump_json().encode()
+    if _uses_json_error_shape(service):
+        body = ErrorEnvelope.from_exc(exc.code, str(exc)).model_dump_json().encode()
+        content_type = b"application/json"
+    else:
+        body = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<ErrorResponse>\n"
+            "  <Error>\n"
+            f"    <Code>{escape(exc.code)}</Code>\n"
+            f"    <Message>{escape(str(exc))}</Message>\n"
+            "  </Error>\n"
+            "  <RequestId></RequestId>\n"
+            "</ErrorResponse>\n"
+        ).encode()
+        content_type = b"text/xml"
     return HttpRequestRejected(
         status_code=status,
         reason=str(exc).encode(),
         headers={
-            b"Content-Type": b"application/json",
+            b"Content-Type": content_type,
             b"Content-Length": str(len(body)).encode(),
             b"Connection": b"close",
         },
         body=body,
     )
+
+
+def _uses_json_error_shape(service: str) -> bool:
+    return service.lower() in _JSON_ERROR_SERVICES
 
 
 def _headers_dict(request: HttpParser) -> dict[str, str]:
@@ -151,7 +170,7 @@ class ResignPlugin(HttpProxyBasePlugin):
             return self._handle(request, service, region)
         except ProxyError as exc:
             log.warning("Rejected request: %s", exc)
-            raise _make_reject(exc) from exc
+            raise _make_reject(exc, service) from exc
 
     def _handle(self, request: HttpParser, service: str, region: str) -> HttpParser:
         method = (request.method or b"GET").decode()
