@@ -6,13 +6,12 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 from botocore.auth import S3SigV4Auth, SigV4Auth
-from botocore.loaders import Loader
 from botocore.awsrequest import AWSRequest
+from botocore.loaders import Loader
 from proxy.http.exception import HttpRequestRejected
 from proxy.http.parser import HttpParser
 from proxy.http.proxy.plugin import HttpProxyBasePlugin
@@ -45,11 +44,6 @@ _AUTH_HEADERS = {
     b"x-amz-security-token",
     b"x-amz-content-sha256",
 }
-
-_FORCE_JSON_ERROR_SERVICES = {"execute-api"}
-_JSON_PROTOCOLS = {"json", "rest-json"}
-_SERVICE_MODEL_LOADER = Loader()
-
 
 def _load_allowlist() -> Allowlist | None:
     if _PROXY_MODE != "enforce":
@@ -133,17 +127,16 @@ def _make_reject(exc: ProxyError, service: str) -> HttpRequestRejected:
     )
 
 
-@lru_cache(maxsize=512)
 def _uses_json_error_shape(service: str) -> bool:
     service = service.lower()
-    if service in _FORCE_JSON_ERROR_SERVICES:
+    if service == "execute-api":
         return True
     try:
-        model = _SERVICE_MODEL_LOADER.load_service_model(service, "service-2")
+        model = Loader().load_service_model(service, "service-2")
     except Exception:
         return False
     protocol = model.get("metadata", {}).get("protocol", "")
-    return protocol in _JSON_PROTOCOLS
+    return protocol in {"json", "rest-json"}
 
 
 def _headers_dict(request: HttpParser) -> dict[str, str]:

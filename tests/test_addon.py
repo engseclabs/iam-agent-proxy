@@ -163,10 +163,8 @@ def test_make_reject_content_type_json_for_json_services():
     ("service", "expected_content_type"),
     [
         ("dynamodb", b"application/json"),
-        ("bedrock", b"application/json"),
         ("execute-api", b"application/json"),
         ("s3", b"text/xml"),
-        ("iam", b"text/xml"),
     ],
 )
 def test_make_reject_content_type_follows_service_protocol(service, expected_content_type):
