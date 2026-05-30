@@ -11,7 +11,6 @@ from xml.sax.saxutils import escape
 
 from botocore.auth import S3SigV4Auth, SigV4Auth
 from botocore.awsrequest import AWSRequest
-from botocore.loaders import Loader
 from proxy.http.exception import HttpRequestRejected
 from proxy.http.parser import HttpParser
 from proxy.http.proxy.plugin import HttpProxyBasePlugin
@@ -44,6 +43,7 @@ _AUTH_HEADERS = {
     b"x-amz-security-token",
     b"x-amz-content-sha256",
 }
+_JSON_ERROR_SERVICES = {"lambda", "apigateway", "execute-api"}
 
 def _load_allowlist() -> Allowlist | None:
     if _PROXY_MODE != "enforce":
@@ -128,15 +128,7 @@ def _make_reject(exc: ProxyError, service: str) -> HttpRequestRejected:
 
 
 def _uses_json_error_shape(service: str) -> bool:
-    service = service.lower()
-    if service == "execute-api":
-        return True
-    try:
-        model = Loader().load_service_model(service, "service-2")
-    except Exception:
-        return False
-    protocol = model.get("metadata", {}).get("protocol", "")
-    return protocol in {"json", "rest-json"}
+    return service.lower() in _JSON_ERROR_SERVICES
 
 
 def _headers_dict(request: HttpParser) -> dict[str, str]:

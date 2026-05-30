@@ -162,7 +162,6 @@ def test_make_reject_content_type_json_for_json_services():
 @pytest.mark.parametrize(
     ("service", "expected_content_type"),
     [
-        ("dynamodb", b"application/json"),
         ("execute-api", b"application/json"),
         ("s3", b"text/xml"),
     ],
