@@ -1,12 +1,15 @@
 """AWS hostname parsing and local SigV4 signature validation."""
 
-__all__ = ["parse_aws_host", "validate_sigv4"]
+__all__ = ["parse_aws_host", "signing_name_for_service", "validate_sigv4"]
 
+import functools
 import hashlib
 import hmac
 import logging
 import re
 from urllib.parse import parse_qs, urlparse
+
+import botocore.loaders
 
 from .credentials import CredentialStore
 
@@ -37,6 +40,43 @@ def parse_aws_host(host: str) -> tuple[str, str] | None:
             return extractor(m)
     log.warning("Could not parse AWS host: %s", host)
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint prefix → SigV4 signing name
+# --------------------------------------------------------------------------- #
+
+@functools.lru_cache(maxsize=1)
+def _endpoint_signing_map() -> dict[str, str]:
+    """Build a map of endpoint prefix → signing name for services where they differ.
+
+    Loaded once from botocore's bundled service models (no network call).
+    Example: "bedrock-runtime" → "bedrock", "s3-control" → "s3".
+    """
+    loader = botocore.loaders.Loader()
+    overrides: dict[str, str] = {}
+    for svc in loader.list_available_services("service-2"):
+        try:
+            data = loader.load_service_model(svc, "service-2")
+            meta = data.get("metadata", {})
+            ep: str = meta.get("endpointPrefix", svc)
+            sn: str = meta.get("signingName", ep)
+            if ep != sn:
+                overrides[ep] = sn
+        except Exception:
+            continue
+    return overrides
+
+
+def signing_name_for_service(endpoint_prefix: str) -> str:
+    """Return the SigV4 signing service name for an AWS endpoint prefix.
+
+    For most services the signing name matches the endpoint prefix (e.g. "s3",
+    "ec2", "iam"). A subset use a different name in the SigV4 credential scope
+    — e.g. bedrock-runtime.*.amazonaws.com signs as "bedrock", not
+    "bedrock-runtime". Using the wrong name produces InvalidSignatureException.
+    """
+    return _endpoint_signing_map().get(endpoint_prefix, endpoint_prefix)
 
 
 # --------------------------------------------------------------------------- #
