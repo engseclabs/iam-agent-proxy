@@ -154,6 +154,10 @@ Set `PROXY_MODE=enforce` and `ALLOWLIST_PATH=/path/to/policy.json`. The proxy re
 
 The allowlist is standard IAM policy JSON (`{"Version":"2012-10-17","Statement":[...]}`), usable directly with `aws iam put-role-policy` or as a session policy.
 
+A third, **interactive** mode (pause an unallowed request and ask a human
+*always allow / allow once / deny*, building the policy in real time) is
+designed in [INTERACTIVE.md](INTERACTIVE.md).
+
 **Action resolution** — the proxy resolves HTTP requests to IAM action strings in-process with no external dependencies. `core/resolver.py` dispatches on the AWS wire protocol for each service:
 
 - **`json` protocol** (DynamoDB, KMS, Lambda, etc.): reads the operation name from the `X-Amz-Target` header.
