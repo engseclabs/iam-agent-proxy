@@ -15,9 +15,16 @@ _CA_CERT = _CA_DIR / "ca.pem"
 _CA_KEY = _CA_DIR / "ca.key"
 _AWS_CONFIG = Path.home() / ".aws" / "config"
 _SOCK_PATH = _CA_DIR / "creds.sock"
+_DECISIONS_SOCK_PATH = Path(
+    os.environ.get("DECISIONS_SOCK_PATH", str(_CA_DIR / "decisions.sock"))
+)
 _ACTION_LOG = Path(
     os.environ.get("ACTION_LOG_PATH", str(_CA_DIR / "actions.log"))
 )
+_PROXY_LOG = Path(
+    os.environ.get("PROXY_LOG_PATH", str(_CA_DIR / "proxy.log"))
+)
+_PROXY_MODE = os.environ.get("PROXY_MODE", "record").lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -112,6 +119,8 @@ def _cmd_start(port: int = 8080) -> None:
 
     print(f"CA cert:    {_CA_CERT}", flush=True)
     print(f"Action log: {_ACTION_LOG}", flush=True)
+    if _PROXY_MODE == "interactive":
+        print(f"Proxy log:  {_PROXY_LOG}", flush=True)
     print("Writing [profile iam-agent-proxy] to ~/.aws/config", flush=True)
     _write_aws_profile()
 
@@ -140,6 +149,22 @@ def _cmd_start(port: int = 8080) -> None:
         _store = CredentialStore()
         start_creds_server(_SOCK_PATH, _store)
 
+        # Interactive mode: start the decision broker in the parent. proxy.py
+        # runs one worker process per CPU (num_workers defaults to 0 ->
+        # multiprocessing.cpu_count()), so workers can't share memory or stdin
+        # with the parent. They reach the broker over decisions.sock — the same
+        # pattern as creds.sock — and the broker is the one place that prompts
+        # the human on the parent's stdin/stdout.
+        if _PROXY_MODE == "interactive":
+            from core.broker import (
+                DecisionBroker,
+                run_stdin_frontend,
+                start_broker_server,
+            )
+            _broker = DecisionBroker()
+            start_broker_server(_DECISIONS_SOCK_PATH, _broker)
+            run_stdin_frontend(_broker)
+
         system_ca_bundle = ssl.get_default_verify_paths().cafile or "/etc/ssl/cert.pem"
         _CERT_DIR = _CA_DIR / "certificates"
         _CERT_DIR.mkdir(parents=True, exist_ok=True)
@@ -155,6 +180,13 @@ def _cmd_start(port: int = 8080) -> None:
             "--ca-file", system_ca_bundle,
             "--plugins", "core.addon.ResignPlugin",
         ]
+        # Output cleanup: in interactive mode the parent's stdout/stdin is the
+        # human prompt surface, so route proxy.py + botocore diagnostics to a
+        # logfile instead of stderr where they'd interleave with the prompt.
+        # stdout then carries only the action stream and the [a]/[o]/[d] prompt.
+        if _PROXY_MODE == "interactive":
+            _PROXY_LOG.parent.mkdir(parents=True, exist_ok=True)
+            sys.argv += ["--log-file", str(_PROXY_LOG)]
         proxy_main()
     finally:
         _remove_aws_profile()
