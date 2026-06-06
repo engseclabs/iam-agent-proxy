@@ -31,6 +31,9 @@ PROXY_SOCK_PATH = Path(
 
 _PROXY_MODE = os.environ.get("PROXY_MODE", "record").lower()
 _ALLOWLIST_PATH = os.environ.get("ALLOWLIST_PATH", "")
+_DECISIONS_SOCK_PATH = Path(
+    os.environ.get("DECISIONS_SOCK_PATH", str(Path.home() / ".iam-agent-proxy" / "decisions.sock"))
+)
 _ACTION_LOG_PATH = Path(
     os.environ.get("ACTION_LOG_PATH", str(Path.home() / ".iam-agent-proxy" / "actions.log"))
 )
@@ -57,12 +60,24 @@ def _load_allowlist() -> Allowlist | None:
     return Allowlist.from_file(path)
 
 
-def _emit_actions(actions: list[str], service: str, method: str, path: str, blocked: bool) -> None:
+def _emit_actions(
+    actions: list[str],
+    service: str,
+    method: str,
+    path: str,
+    blocked: bool,
+    *,
+    to_stdout: bool = True,
+) -> None:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     status = "BLOCKED" if blocked else "ALLOWED"
     for action in actions:
-        line = f"[{ts}] {status:7s}  {action}"
-        print(line, flush=True)
+        # In interactive mode the parent broker's stdin front-end owns stdout
+        # (the prompt surface); workers must not print there or they'd
+        # interleave with the live prompt. The action log is still written so
+        # `iam-agent-proxy policy` keeps working.
+        if to_stdout:
+            print(f"[{ts}] {status:7s}  {action}", flush=True)
         try:
             _ACTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
             with _log_lock:
@@ -196,7 +211,26 @@ class ResignPlugin(HttpProxyBasePlugin):
             service_slug=service,
         )
 
-        if _allowlist is not None:
+        if _PROXY_MODE == "interactive":
+            # Ask the human, live. handle_client_request is synchronous and
+            # already blocks the HTTP request while the plugin runs, so pausing
+            # here IS the human-in-the-loop pause — no async machinery needed.
+            # decide() asks the parent broker over the decisions socket; it
+            # coalesces the whole resolved set into one prompt (all-or-nothing)
+            # and fails closed to DENY on any broker error/timeout.
+            from .broker import Decision, decide
+
+            decision = decide(actions, resource=None, sock_path=_DECISIONS_SOCK_PATH)
+            if decision == Decision.DENY:
+                denied = actions[0] if actions else f"{service}:Unknown"
+                _emit_actions(actions, service, method, path, blocked=True, to_stdout=False)
+                raise EnforcementError(
+                    f"User is not authorized to perform: {denied} "
+                    f"(proxy interactive mode)"
+                )
+            # ALLOW_ONCE / ALWAYS_ALLOW -> fall through and forward.
+            # (ALWAYS_ALLOW persistence is handled parent-side by the broker.)
+        elif _allowlist is not None:
             if not _allowlist.permits(actions):
                 denied = actions[0] if actions else f"{service}:Unknown"
                 _emit_actions(actions, service, method, path, blocked=True)
@@ -206,7 +240,12 @@ class ResignPlugin(HttpProxyBasePlugin):
                 )
 
         if actions:
-            _emit_actions(actions, service, method, path, blocked=False)
+            # Interactive mode prints via the parent broker's front-end; keep
+            # the worker off stdout here so the two don't interleave.
+            _emit_actions(
+                actions, service, method, path, blocked=False,
+                to_stdout=(_PROXY_MODE != "interactive"),
+            )
 
         try:
             creds = _upstream_creds.get()

@@ -347,3 +347,82 @@ def test_make_reject_code_for_enforcement_error():
     rej = _make_reject(exc, "s3")
     root = ET.fromstring(rej.body)
     assert root.findtext("./Error/Code") == "AccessDenied"
+
+
+# --------------------------------------------------------------------------- #
+# Interactive mode gate (PROXY_MODE=interactive)
+# --------------------------------------------------------------------------- #
+
+import core.broker as broker_mod
+from core.broker import Decision
+
+
+@pytest.fixture
+def interactive_mode():
+    """Put the addon in interactive mode for the duration of a test."""
+    saved_mode = addon_mod._PROXY_MODE
+    saved_decide = broker_mod.decide
+    addon_mod._PROXY_MODE = "interactive"
+    yield
+    addon_mod._PROXY_MODE = saved_mode
+    broker_mod.decide = saved_decide
+
+
+def _make_interactive_plugin(resolved_actions, decision):
+    """Plugin in interactive mode whose broker always returns `decision`.
+
+    `decide` is imported inside `_handle` from core.broker at call time, so
+    patching the module attribute is enough.
+    """
+    plugin = _make_plugin(allowlist=None, resolver=_FakeResolver(resolved_actions))
+    broker_mod.decide = lambda actions, resource=None, sock_path=None: decision
+    return plugin
+
+
+def test_interactive_allow_once_forwards(interactive_mode):
+    plugin = _make_interactive_plugin(["s3:GetObject"], Decision.ALLOW_ONCE)
+    request = _make_signed_parser()
+    result = plugin._handle(request, "s3", "us-east-1")
+    assert result is request
+
+
+def test_interactive_always_allow_forwards(interactive_mode):
+    plugin = _make_interactive_plugin(["s3:GetObject"], Decision.ALWAYS_ALLOW)
+    request = _make_signed_parser()
+    result = plugin._handle(request, "s3", "us-east-1")
+    assert result is request
+
+
+def test_interactive_deny_raises_enforcement_error(interactive_mode):
+    plugin = _make_interactive_plugin(["s3:GetObject"], Decision.DENY)
+    request = _make_signed_parser()
+    with pytest.raises(EnforcementError):
+        plugin._handle(request, "s3", "us-east-1")
+
+
+def test_interactive_deny_surfaces_access_denied(interactive_mode):
+    from proxy.http.exception import HttpRequestRejected
+    plugin = _make_interactive_plugin(["s3:DeleteObject"], Decision.DENY)
+    request = _make_signed_parser()
+    with pytest.raises(HttpRequestRejected) as exc_info:
+        plugin.handle_client_request(request)
+    assert exc_info.value.status_code == 403
+    root = ET.fromstring(exc_info.value.body)
+    assert root.findtext("./Error/Code") == "AccessDenied"
+
+
+def test_interactive_passes_full_action_set_to_broker(interactive_mode):
+    """Coalescing: the whole resolved set is handed to decide() in one call."""
+    captured = {}
+
+    def fake_decide(actions, resource=None, sock_path=None):
+        captured["actions"] = actions
+        captured["calls"] = captured.get("calls", 0) + 1
+        return Decision.ALLOW_ONCE
+
+    plugin = _make_plugin(resolver=_FakeResolver(["s3:GetObject", "s3:PutObject"]))
+    broker_mod.decide = fake_decide
+    request = _make_signed_parser()
+    plugin._handle(request, "s3", "us-east-1")
+    assert captured["actions"] == ["s3:GetObject", "s3:PutObject"]
+    assert captured["calls"] == 1  # one prompt for the set, not per-action
