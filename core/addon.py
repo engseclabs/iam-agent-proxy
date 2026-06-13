@@ -20,7 +20,7 @@ from .credentials import CredentialStore, fetch_store_from_socket, start_creds_s
 from .exceptions import EnforcementError, ProxyError, UpstreamError, ValidationError, error_status
 from .models import ErrorEnvelope
 from .resolver import load_resolver
-from .sigv4 import parse_aws_host, validate_sigv4
+from .sigv4 import parse_aws_host, signing_name_for_service, validate_sigv4
 from .upstream_creds import BotoCredentialSource
 
 log = logging.getLogger(__name__)
@@ -229,8 +229,9 @@ class ResignPlugin(HttpProxyBasePlugin):
             data=body,
             headers=clean_headers,
         )
-        auth_cls = S3SigV4Auth if service == "s3" else SigV4Auth
-        auth_cls(creds, service, region).add_auth(aws_request)
+        signing_service = signing_name_for_service(service)
+        auth_cls = S3SigV4Auth if signing_service == "s3" else SigV4Auth
+        auth_cls(creds, signing_service, region).add_auth(aws_request)
 
         # Inject only the auth headers that botocore wrote — identified by
         # checking which keys are new (not in clean_headers) or were changed.

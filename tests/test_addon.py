@@ -180,6 +180,28 @@ def test_make_reject_xml_body():
 
 
 # --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+def _credential_scope_service(auth_header: str) -> str:
+    """Extract the service field from a SigV4 Authorization credential scope.
+
+    Authorization: AWS4-HMAC-SHA256 Credential=AKID/date/region/SERVICE/aws4_request,...
+    Returns SERVICE, or "" if the header can't be parsed.
+
+    Handles both botocore's space-separated format ("..., SignedHeaders=...") and
+    the no-space format used by conftest.make_signed_request.
+    """
+    for token in auth_header.split():
+        token = token.rstrip(",")
+        if token.startswith("Credential="):
+            fields = token[len("Credential="):].split("/")
+            if len(fields) >= 4:
+                return fields[3]
+    return ""
+
+
+# --------------------------------------------------------------------------- #
 # _handle — validation
 # --------------------------------------------------------------------------- #
 
@@ -347,3 +369,61 @@ def test_make_reject_code_for_enforcement_error():
     rej = _make_reject(exc, "s3")
     root = ET.fromstring(rej.body)
     assert root.findtext("./Error/Code") == "AccessDenied"
+
+
+# --------------------------------------------------------------------------- #
+# Signing name vs endpoint prefix (Gap: bedrock-runtime signs as "bedrock")
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("endpoint_prefix, signing_service, host, path", [
+    (
+        "bedrock-runtime",
+        "bedrock",
+        "bedrock-runtime.us-east-1.amazonaws.com",
+        "/model/anthropic.claude-3-haiku-20240307-v1:0/invoke",
+    ),
+    (
+        "bedrock-agent-runtime",
+        "bedrock",
+        "bedrock-agent-runtime.us-east-1.amazonaws.com",
+        "/agents/AGENTID/agentAliases/ALIASID/sessions/SESSION/text",
+    ),
+    (
+        "s3-control",
+        "s3",
+        "s3-control.us-east-1.amazonaws.com",
+        "/v20180820/bucket",
+    ),
+])
+def test_resign_uses_signing_name_not_endpoint_prefix(
+    endpoint_prefix, signing_service, host, path
+):
+    """Re-signed requests must use the SigV4 signing name in the credential scope.
+
+    parse_aws_host returns the hostname prefix (e.g. "bedrock-runtime"), but
+    several AWS services use a different name in the SigV4 credential scope
+    (e.g. "bedrock"). Without the fix, AWS returns InvalidSignatureException
+    because the credential scope service field doesn't match.
+
+    The agent (boto3) signs inbound requests with the correct signing name, so
+    the inbound validation passes. The bug is in the outbound re-signing step
+    where the hostname-derived prefix was passed directly to SigV4Auth.
+    """
+    plugin = _make_plugin()
+    # Agent signs with the correct signing name (what boto3 actually produces)
+    request = _make_signed_parser(
+        host=host,
+        path=path,
+        service=signing_service,
+        region="us-east-1",
+        method="POST",
+        body=b'{"inputText": "hello"}',
+    )
+    # _handle receives the endpoint prefix from parse_aws_host, not the signing name
+    plugin._handle(request, endpoint_prefix, "us-east-1")
+    auth = request.header(b"authorization").decode()
+    scope_service = _credential_scope_service(auth)
+    assert scope_service == signing_service, (
+        f"Re-signed Authorization has '{scope_service}' in credential scope; "
+        f"expected '{signing_service}'. AWS would reject with InvalidSignatureException."
+    )

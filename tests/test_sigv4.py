@@ -5,7 +5,7 @@ import hmac
 
 import pytest
 
-from core.sigv4 import _parse_auth_header, _signing_key, parse_aws_host, validate_sigv4
+from core.sigv4 import _parse_auth_header, _signing_key, parse_aws_host, signing_name_for_service, validate_sigv4
 from core.credentials import CredentialStore
 
 from conftest import make_signed_request, make_store_with
@@ -119,6 +119,35 @@ def test_validate_sigv4_unknown_key_returns_false():
         secret="s",
     )
     assert validate_sigv4(method, url, headers, body, store) is False
+
+
+# --------------------------------------------------------------------------- #
+# signing_name_for_service
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("endpoint_prefix, expected", [
+    # Services where endpoint prefix matches signing name (common case)
+    ("s3",      "s3"),
+    ("ec2",     "ec2"),
+    ("iam",     "iam"),
+    ("sts",     "sts"),
+    ("lambda",  "lambda"),
+    # Bedrock family: hostname prefix differs from SigV4 signing name.
+    # Requests to bedrock-runtime.*.amazonaws.com must sign as "bedrock";
+    # using "bedrock-runtime" produces InvalidSignatureException.
+    ("bedrock-runtime",              "bedrock"),
+    ("bedrock-agent",                "bedrock"),
+    ("bedrock-agent-runtime",        "bedrock"),
+    ("bedrock-data-automation",      "bedrock"),
+    # S3 control plane
+    ("s3-control",                   "s3"),
+])
+def test_signing_name_for_service(endpoint_prefix, expected):
+    assert signing_name_for_service(endpoint_prefix) == expected
+
+
+def test_signing_name_unknown_service_returns_input():
+    assert signing_name_for_service("totally-made-up-service-xyz") == "totally-made-up-service-xyz"
 
 
 def test_validate_sigv4_malformed_credential_field_returns_false():
